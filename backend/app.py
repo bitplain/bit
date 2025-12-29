@@ -1,0 +1,375 @@
+import base64
+import hashlib
+import hmac
+import json
+import os
+import secrets
+import sqlite3
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urlparse
+
+DB_PATH = os.environ.get("DB_PATH", "/data/app.db")
+APP_SECRET = os.environ.get("APP_SECRET", "dev-secret")
+FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "http://localhost:4173")
+
+
+def ensure_db():
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            full_name TEXT,
+            phone TEXT,
+            created_at INTEGER NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sessions (
+            token TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            content_md TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_conn():
+    ensure_db()
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    hashed = hashlib.scrypt(password.encode(), salt=salt, n=2 ** 14, r=8, p=1, dklen=32)
+    return base64.b64encode(salt + hashed).decode()
+
+
+def verify_password(password: str, stored: str) -> bool:
+    try:
+        data = base64.b64decode(stored.encode())
+        salt, hashed = data[:16], data[16:]
+        new_hash = hashlib.scrypt(password.encode(), salt=salt, n=2 ** 14, r=8, p=1, dklen=32)
+        return hmac.compare_digest(hashed, new_hash)
+    except Exception:
+        return False
+
+
+def simple_encrypt(plaintext: str) -> str:
+    # Примитивный XOR-подход для прототипа (заменить на настоящую криптографию в продакшене)
+    key = hashlib.sha256(APP_SECRET.encode()).digest()
+    data = plaintext.encode()
+    xored = bytes(b ^ key[i % len(key)] for i, b in enumerate(data))
+    return base64.b64encode(xored).decode()
+
+
+def simple_decrypt(ciphertext: str) -> str:
+    try:
+        key = hashlib.sha256(APP_SECRET.encode()).digest()
+        data = base64.b64decode(ciphertext.encode())
+        plain = bytes(b ^ key[i % len(key)] for i, b in enumerate(data))
+        return plain.decode()
+    except Exception:
+        return ""
+
+
+def parse_json(handler: BaseHTTPRequestHandler):
+    length = int(handler.headers.get("Content-Length", "0"))
+    raw = handler.rfile.read(length) if length else b""
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw.decode())
+    except json.JSONDecodeError:
+        return {}
+
+
+def json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict, extra_headers=None):
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Access-Control-Allow-Origin", FRONTEND_ORIGIN)
+    handler.send_header("Access-Control-Allow-Credentials", "true")
+    if extra_headers:
+        for k, v in extra_headers.items():
+            handler.send_header(k, v)
+    handler.end_headers()
+    handler.wfile.write(json.dumps(payload).encode())
+
+
+def set_session_cookie(handler: BaseHTTPRequestHandler, token: str):
+    cookie = f"session={token}; Path=/; HttpOnly; SameSite=Lax"
+    handler.send_header("Set-Cookie", cookie)
+
+
+def get_session_token(handler: BaseHTTPRequestHandler):
+    cookie_header = handler.headers.get("Cookie")
+    if not cookie_header:
+        return None
+    for part in cookie_header.split(';'):
+        if '=' not in part:
+            continue
+        name, value = part.strip().split('=', 1)
+        if name == 'session':
+            return value
+    return None
+
+
+def with_session(handler: BaseHTTPRequestHandler):
+    token = get_session_token(handler)
+    if not token:
+        return None
+    conn = get_conn()
+    now = int(time.time())
+    row = conn.execute(
+        "SELECT sessions.token, sessions.user_id, users.email, users.full_name, users.phone FROM sessions "
+        "JOIN users ON users.id = sessions.user_id WHERE sessions.token = ? AND sessions.expires_at > ?",
+        (token, now),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+class AppHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):  # noqa: N802
+        # Тише в контейнере
+        return
+
+    def do_OPTIONS(self):  # noqa: N802
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", FRONTEND_ORIGIN)
+        self.send_header("Access-Control-Allow-Credentials", "true")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
+        self.end_headers()
+
+    def do_GET(self):  # noqa: N802
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/health":
+            json_response(self, 200, {"status": "ok"})
+            return
+
+        if parsed.path == "/api/me":
+            session = with_session(self)
+            if not session:
+                json_response(self, 401, {"error": "auth_required"})
+                return
+            user = {
+                "email": session[2],
+                "full_name": simple_decrypt(session[3]) if session[3] else None,
+                "phone": simple_decrypt(session[4]) if session[4] else None,
+            }
+            json_response(self, 200, {"user": user})
+            return
+
+        if parsed.path == "/api/notes":
+            session = with_session(self)
+            if not session:
+                json_response(self, 401, {"error": "auth_required"})
+                return
+            conn = get_conn()
+            rows = conn.execute(
+                "SELECT id, title, content_md, created_at, updated_at FROM notes WHERE user_id = ? ORDER BY updated_at DESC",
+                (session[1],),
+            ).fetchall()
+            conn.close()
+            notes = [dict(row) for row in rows]
+            json_response(self, 200, {"notes": notes})
+            return
+
+        json_response(self, 404, {"error": "not_found"})
+
+    def do_POST(self):  # noqa: N802
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/register":
+            data = parse_json(self)
+            email = (data.get("email") or "").strip().lower()
+            password = data.get("password") or ""
+            full_name = data.get("full_name") or ""
+            phone = data.get("phone") or ""
+            if not email or not password:
+                json_response(self, 400, {"error": "email_and_password_required"})
+                return
+            conn = get_conn()
+            try:
+                conn.execute(
+                    "INSERT INTO users (email, password_hash, full_name, phone, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (
+                        email,
+                        hash_password(password),
+                        simple_encrypt(full_name) if full_name else None,
+                        simple_encrypt(phone) if phone else None,
+                        int(time.time()),
+                    ),
+                )
+                conn.commit()
+            except sqlite3.IntegrityError:
+                conn.close()
+                json_response(self, 409, {"error": "email_exists"})
+                return
+            conn.close()
+            json_response(self, 201, {"ok": True})
+            return
+
+        if parsed.path == "/api/login":
+            data = parse_json(self)
+            email = (data.get("email") or "").strip().lower()
+            password = data.get("password") or ""
+            conn = get_conn()
+            row = conn.execute(
+                "SELECT id, password_hash FROM users WHERE email = ?",
+                (email,),
+            ).fetchone()
+            if not row or not verify_password(password, row[1]):
+                conn.close()
+                json_response(self, 401, {"error": "invalid_credentials"})
+                return
+            token = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
+            expires = int(time.time()) + 7 * 24 * 3600
+            conn.execute(
+                "INSERT OR REPLACE INTO sessions (token, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
+                (token, row[0], expires, int(time.time())),
+            )
+            conn.commit()
+            conn.close()
+            self.send_response(200)
+            set_session_cookie(self, token)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", FRONTEND_ORIGIN)
+            self.send_header("Access-Control-Allow-Credentials", "true")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": True}).encode())
+            return
+
+        if parsed.path == "/api/logout":
+            token = get_session_token(self)
+            if token:
+                conn = get_conn()
+                conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+                conn.commit()
+                conn.close()
+            self.send_response(200)
+            self.send_header("Set-Cookie", "session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax")
+            self.send_header("Access-Control-Allow-Origin", FRONTEND_ORIGIN)
+            self.send_header("Access-Control-Allow-Credentials", "true")
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": True}).encode())
+            return
+
+        if parsed.path == "/api/notes":
+            session = with_session(self)
+            if not session:
+                json_response(self, 401, {"error": "auth_required"})
+                return
+            data = parse_json(self)
+            title = (data.get("title") or "").strip()
+            content = data.get("content") or ""
+            if not title:
+                json_response(self, 400, {"error": "title_required"})
+                return
+            now = int(time.time())
+            conn = get_conn()
+            conn.execute(
+                "INSERT INTO notes (user_id, title, content_md, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                (session[1], title, content, now, now),
+            )
+            conn.commit()
+            conn.close()
+            json_response(self, 201, {"ok": True})
+            return
+
+        json_response(self, 404, {"error": "not_found"})
+
+    def do_PUT(self):  # noqa: N802
+        parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/notes/"):
+            session = with_session(self)
+            if not session:
+                json_response(self, 401, {"error": "auth_required"})
+                return
+            try:
+                note_id = int(parsed.path.split("/")[-1])
+            except ValueError:
+                json_response(self, 400, {"error": "invalid_id"})
+                return
+            data = parse_json(self)
+            title = (data.get("title") or "").strip()
+            content = data.get("content") or ""
+            conn = get_conn()
+            row = conn.execute(
+                "SELECT id FROM notes WHERE id = ? AND user_id = ?",
+                (note_id, session[1]),
+            ).fetchone()
+            if not row:
+                conn.close()
+                json_response(self, 404, {"error": "not_found"})
+                return
+            conn.execute(
+                "UPDATE notes SET title = ?, content_md = ?, updated_at = ? WHERE id = ?",
+                (title, content, int(time.time()), note_id),
+            )
+            conn.commit()
+            conn.close()
+            json_response(self, 200, {"ok": True})
+            return
+        json_response(self, 404, {"error": "not_found"})
+
+    def do_DELETE(self):  # noqa: N802
+        parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/notes/"):
+            session = with_session(self)
+            if not session:
+                json_response(self, 401, {"error": "auth_required"})
+                return
+            try:
+                note_id = int(parsed.path.split("/")[-1])
+            except ValueError:
+                json_response(self, 400, {"error": "invalid_id"})
+                return
+            conn = get_conn()
+            conn.execute(
+                "DELETE FROM notes WHERE id = ? AND user_id = ?",
+                (note_id, session[1]),
+            )
+            conn.commit()
+            conn.close()
+            json_response(self, 200, {"ok": True})
+            return
+        json_response(self, 404, {"error": "not_found"})
+
+
+def run():
+    port = int(os.environ.get("PORT", "8000"))
+    ensure_db()
+    server = HTTPServer(("0.0.0.0", port), AppHandler)
+    print(f"Backend running on port {port}")
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    run()
