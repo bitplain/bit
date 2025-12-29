@@ -9,103 +9,120 @@
   <body>
     <div id="app" class="page">
       <header class="hero">
-        <div class="hero-copy">
-          <p class="eyebrow">тёмный режим · персональный блог</p>
-          <h1>Личный кабинет + карточки блога</h1>
-          <p class="lede">
-            Добавляйте записи в закрытом кабинете, публикуйте их в блог карточками и держите под рукой ссылку на свой менеджер паролей.
-          </p>
-          <div class="hero-actions">
-            <a id="password-manager-link" class="pill-link" target="_blank" rel="noreferrer">Добавьте ссылку на менеджер паролей</a>
-            <span class="status" id="status">Требуется вход</span>
-          </div>
+        <div>
+          <p class="eyebrow">тихий тёмный режим</p>
+          <h1>Лаконичный вход как в macOS</h1>
+          <p class="lede">Снаружи только форма авторизации. После входа — карточки админки: блог и файловый менеджер.</p>
         </div>
-        <div class="hero-card">
-          <p class="tag">Блог из кабинета</p>
-          <h3>Публикации и черновики раздельно</h3>
-          <p class="mini">Карточки с публикуемыми записями доступны на отдельной секции блога.</p>
-        </div>
+        <span class="status" id="status">Требуется вход</span>
       </header>
 
-      <div class="grid two-columns">
-        <section class="panel" id="auth-panel">
-          <div class="panel-header">
-            <h2>Войти в личный кабинет</h2>
-            <p class="hint">Создайте аккаунт один раз, дальше используйте email и пароль.</p>
-          </div>
-          <form id="auth-form" class="stack">
-            <label class="field">
-              <span>Почта</span>
-              <input type="email" name="email" required />
-            </label>
-            <label class="field">
-              <span>Пароль</span>
-              <input type="password" name="password" required />
-            </label>
-            <div class="actions">
-              <button type="submit" class="btn primary" id="login-btn">Войти</button>
-              <button type="button" class="btn ghost" id="register-btn">Зарегистрироваться</button>
-            </div>
-          </form>
-        </section>
-
-        <section class="panel" id="profile-panel" hidden>
-          <div class="panel-header">
-            <h2>Профиль и доступ</h2>
-            <p class="hint">Ссылка на менеджер паролей выводится в шапке, а данные шифруются на сервере.</p>
-          </div>
-          <div class="profile-grid" id="profile-data"></div>
-          <form id="profile-form" class="stack profile-form">
-            <label class="field">
-              <span>Имя или подпись автора</span>
-              <input type="text" name="full_name" id="full-name" placeholder="Например, ваше имя" />
-            </label>
-            <label class="field">
-              <span>Телефон (необязательно)</span>
-              <input type="tel" name="phone" id="phone" placeholder="+7..." />
-            </label>
-            <label class="field">
-              <span>Ссылка на менеджер паролей</span>
-              <input type="url" name="password_manager_url" id="manager-url" placeholder="https://vault.my-domain" />
-            </label>
-            <div class="actions">
-              <button type="submit" class="btn primary">Сохранить профиль</button>
-              <button type="button" class="btn ghost" id="logout-btn">Выйти</button>
-            </div>
-          </form>
-        </section>
-      </div>
-
-      <section class="panel" id="notes-panel" hidden>
+      <section class="panel glass" id="auth-panel">
         <div class="panel-header">
-          <h2>Личный кабинет: записи блога</h2>
-          <p class="hint">Черновики остаются у вас, опубликованные карточки уходят в публичный блог ниже.</p>
+          <h2>Вход</h2>
+          <p class="hint">Минимум отвлечений: только почта и пароль.</p>
         </div>
-        <form id="note-form" class="stack">
+        <form id="auth-form" class="stack">
           <label class="field">
-            <span>Заголовок</span>
-            <input type="text" name="title" required />
+            <span>Почта</span>
+            <input type="email" name="email" required />
           </label>
           <label class="field">
-            <span>Текст в Markdown</span>
-            <textarea name="content" rows="6" placeholder="# Пример"></textarea>
+            <span>Пароль</span>
+            <input type="password" name="password" required />
           </label>
-          <label class="checkbox">
-            <input type="checkbox" name="publish" />
-            <span>Сразу опубликовать карточку в блоге</span>
-          </label>
-          <div class="preview" id="preview"></div>
-          <button type="submit" class="btn primary">Сохранить</button>
+          <div class="actions">
+            <button type="submit" class="btn primary" id="login-btn">Войти</button>
+            <button type="button" class="btn ghost" id="register-btn">Создать первого пользователя</button>
+          </div>
         </form>
-        <div id="notes-list" class="notes"></div>
       </section>
 
-      <section class="panel" id="blog-panel">
+      <section class="panel" id="admin-panel" hidden>
         <div class="panel-header">
-          <h2>Публичный блог</h2>
-          <p class="hint">Список карточек, которые вы отметили как опубликованные.</p>
+          <h2>Админ-карточки</h2>
+          <div class="panel-actions">
+            <p class="hint">Быстрый доступ: пользователи, блог, файловый менеджер.</p>
+            <button class="btn ghost" id="logout-btn" type="button">Выйти</button>
+          </div>
         </div>
-        <div id="blog-list" class="notes"></div>
+        <div class="card-grid">
+          <div class="card action-card">
+            <div class="card-header">
+              <h3>Пользователи</h3>
+              <p class="mini">Создайте новых пользователей сразу здесь.</p>
+            </div>
+            <form id="user-form" class="stack">
+              <label class="field">
+                <span>Email нового пользователя</span>
+                <input type="email" name="user_email" required />
+              </label>
+              <label class="field">
+                <span>Пароль</span>
+                <input type="password" name="user_password" required />
+              </label>
+              <label class="checkbox">
+                <input type="checkbox" name="user_is_admin" />
+                <span>Сделать админом</span>
+              </label>
+              <button type="submit" class="btn secondary">Создать пользователя</button>
+            </form>
+            <div id="user-list" class="pill-list"></div>
+          </div>
+
+          <div class="card" id="blog-card">
+            <div class="card-header">
+              <h3>Блог</h3>
+              <p class="mini">Создавайте и редактируйте карточки блога.</p>
+            </div>
+            <form id="note-form" class="stack">
+              <input type="hidden" name="note_id" id="note-id" />
+              <label class="field">
+                <span>Заголовок</span>
+                <input type="text" name="title" id="note-title" required />
+              </label>
+              <label class="field">
+                <span>Текст в Markdown</span>
+                <textarea name="content" id="note-content" rows="6" placeholder="# Пример"></textarea>
+              </label>
+              <label class="checkbox">
+                <input type="checkbox" name="publish" id="note-publish" />
+                <span>Опубликовать</span>
+              </label>
+              <div class="actions">
+                <button type="submit" class="btn primary" id="note-save">Сохранить</button>
+                <button type="button" class="btn ghost" id="note-cancel">Сбросить</button>
+              </div>
+              <div class="preview" id="preview"></div>
+            </form>
+            <div id="notes-list" class="notes compact"></div>
+          </div>
+
+          <div class="card" id="files-card">
+            <div class="card-header">
+              <h3>Файловый менеджер</h3>
+              <p class="mini">Безопасный доступ к каталогу внутри контейнера.</p>
+            </div>
+            <div class="stack">
+              <div class="path-row">
+                <label class="field">
+                  <span>Текущий путь</span>
+                  <input type="text" id="current-path" value="/" />
+                </label>
+                <button class="btn ghost" id="refresh-files" type="button">Обновить</button>
+              </div>
+              <div id="file-list" class="file-list"></div>
+              <form id="folder-form" class="inline-form">
+                <input type="text" id="folder-name" placeholder="Новая папка" />
+                <button type="submit" class="btn secondary">Создать папку</button>
+              </form>
+              <form id="upload-form" class="inline-form">
+                <input type="file" id="file-input" />
+                <button type="submit" class="btn primary">Загрузить файл</button>
+              </form>
+            </div>
+          </div>
+        </div>
       </section>
     </div>
     <script type="module" src="/assets/app.js"></script>

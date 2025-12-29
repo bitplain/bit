@@ -1,43 +1,41 @@
 const API_BASE = 'http://localhost:8000';
 
+const authPanel = document.getElementById('auth-panel');
+const adminPanel = document.getElementById('admin-panel');
 const authForm = document.getElementById('auth-form');
 const loginBtn = document.getElementById('login-btn');
 const registerBtn = document.getElementById('register-btn');
 const logoutBtn = document.getElementById('logout-btn');
-const profilePanel = document.getElementById('profile-panel');
-const notesPanel = document.getElementById('notes-panel');
-const authPanel = document.getElementById('auth-panel');
-const profileData = document.getElementById('profile-data');
 const statusEl = document.getElementById('status');
-const notesList = document.getElementById('notes-list');
-const noteForm = document.getElementById('note-form');
-const previewEl = document.getElementById('preview');
-const blogList = document.getElementById('blog-list');
-const managerLink = document.getElementById('password-manager-link');
-const profileForm = document.getElementById('profile-form');
-const fullNameInput = document.getElementById('full-name');
-const phoneInput = document.getElementById('phone');
-const managerUrlInput = document.getElementById('manager-url');
 
-const state = { user: null };
+const noteForm = document.getElementById('note-form');
+const noteIdInput = document.getElementById('note-id');
+const noteTitle = document.getElementById('note-title');
+const noteContent = document.getElementById('note-content');
+const notePublish = document.getElementById('note-publish');
+const noteCancel = document.getElementById('note-cancel');
+const previewEl = document.getElementById('preview');
+const notesList = document.getElementById('notes-list');
+
+const userForm = document.getElementById('user-form');
+const userList = document.getElementById('user-list');
+
+const currentPathInput = document.getElementById('current-path');
+const refreshFilesBtn = document.getElementById('refresh-files');
+const fileList = document.getElementById('file-list');
+const folderForm = document.getElementById('folder-form');
+const folderNameInput = document.getElementById('folder-name');
+const uploadForm = document.getElementById('upload-form');
+const fileInput = document.getElementById('file-input');
+
+const state = {
+  user: null,
+  editingNoteId: null,
+  currentPath: '/',
+};
 
 function setStatus(text) {
   statusEl.textContent = text;
-}
-
-function updatePasswordManagerLink(url) {
-  if (url) {
-    managerLink.href = url;
-    managerLink.textContent = 'Менеджер паролей';
-    managerLink.target = '_blank';
-    managerLink.rel = 'noreferrer';
-    managerLink.classList.remove('inactive');
-  } else {
-    managerLink.href = '#';
-    managerLink.textContent = 'Добавьте ссылку на менеджер паролей';
-    managerLink.removeAttribute('target');
-    managerLink.classList.add('inactive');
-  }
 }
 
 async function api(path, options = {}) {
@@ -52,49 +50,52 @@ async function api(path, options = {}) {
   return data;
 }
 
-function renderProfile(user) {
-  profileData.innerHTML = '';
-  const entries = [
-    ['Email', user.email],
-    ['Имя', user.full_name || '—'],
-    ['Телефон', user.phone || '—'],
-    ['Менеджер паролей', user.password_manager_url ? 'привязан' : 'нет ссылки'],
-  ];
-  entries.forEach(([label, value]) => {
-    const pill = document.createElement('div');
-    pill.className = 'pill';
-    pill.textContent = `${label}: ${value}`;
-    profileData.appendChild(pill);
-  });
-  fullNameInput.value = user.full_name || '';
-  phoneInput.value = user.phone || '';
-  managerUrlInput.value = user.password_manager_url || '';
-  updatePasswordManagerLink(user.password_manager_url);
+function formatDate(ts) {
+  return new Date(ts * 1000).toLocaleString('ru-RU');
+}
+
+function showDashboard(user) {
+  authPanel.hidden = true;
+  adminPanel.hidden = false;
+  setStatus(`Админ: ${user.email}`);
+}
+
+function hideDashboard() {
+  adminPanel.hidden = true;
+  authPanel.hidden = false;
+  setStatus('Требуется вход');
 }
 
 async function loadProfile() {
   try {
     const data = await api('/api/me');
     state.user = data.user;
-    authPanel.hidden = true;
-    profilePanel.hidden = false;
-    notesPanel.hidden = false;
-    setStatus(`Привет, ${data.user.email}`);
-    renderProfile(data.user);
-    await loadNotes();
-    await loadBlog();
+    if (!data.user.is_admin) {
+      hideDashboard();
+      setStatus('Нужен аккаунт администратора');
+      return;
+    }
+    showDashboard(data.user);
+    await Promise.all([loadUsers(), loadNotes(), loadFiles(state.currentPath)]);
   } catch (e) {
     state.user = null;
-    profilePanel.hidden = true;
-    notesPanel.hidden = true;
-    authPanel.hidden = false;
-    setStatus('Требуется вход');
-    updatePasswordManagerLink('');
+    hideDashboard();
   }
 }
 
-function formatDate(ts) {
-  return new Date(ts * 1000).toLocaleString('ru-RU');
+async function loadUsers() {
+  try {
+    const data = await api('/api/admin/users');
+    userList.innerHTML = '';
+    data.users.forEach((u) => {
+      const pill = document.createElement('div');
+      pill.className = 'pill';
+      pill.textContent = `${u.email}${u.is_admin ? ' · admin' : ''}`;
+      userList.appendChild(pill);
+    });
+  } catch (e) {
+    userList.innerHTML = '<p class="empty">Не удалось загрузить пользователей</p>';
+  }
 }
 
 async function loadNotes() {
@@ -102,7 +103,7 @@ async function loadNotes() {
     const data = await api('/api/notes');
     notesList.innerHTML = '';
     if (!data.notes.length) {
-      notesList.innerHTML = '<p class="empty">Пока нет записей. Добавьте черновик или опубликуйте сразу.</p>';
+      notesList.innerHTML = '<p class="empty">Ещё нет записей. Создайте первую карточку блога.</p>';
       return;
     }
     data.notes.forEach((note) => {
@@ -126,6 +127,18 @@ async function loadNotes() {
       const actions = document.createElement('div');
       actions.className = 'card-actions';
 
+      const editBtn = document.createElement('button');
+      editBtn.className = 'btn secondary';
+      editBtn.textContent = 'Редактировать';
+      editBtn.addEventListener('click', () => {
+        state.editingNoteId = note.id;
+        noteIdInput.value = note.id;
+        noteTitle.value = note.title;
+        noteContent.value = note.content_md;
+        notePublish.checked = !!note.published;
+        previewEl.textContent = note.content_md;
+      });
+
       const toggleBtn = document.createElement('button');
       toggleBtn.className = note.published ? 'btn ghost' : 'btn secondary';
       toggleBtn.textContent = note.published ? 'Снять с публикации' : 'Опубликовать';
@@ -135,7 +148,6 @@ async function loadNotes() {
           body: JSON.stringify({ published: !note.published }),
         });
         await loadNotes();
-        await loadBlog();
       });
 
       const deleteBtn = document.createElement('button');
@@ -144,43 +156,22 @@ async function loadNotes() {
       deleteBtn.addEventListener('click', async () => {
         await api(`/api/notes/${note.id}`, { method: 'DELETE' });
         await loadNotes();
-        await loadBlog();
       });
 
-      actions.append(toggleBtn, deleteBtn);
+      actions.append(editBtn, toggleBtn, deleteBtn);
       card.append(title, badge, meta, body, actions);
       notesList.appendChild(card);
     });
   } catch (e) {
-    notesList.innerHTML = '<p class="empty">Не удалось загрузить заметки</p>';
+    notesList.innerHTML = '<p class="empty">Не удалось загрузить блог</p>';
   }
 }
 
-async function loadBlog() {
-  try {
-    const data = await api('/api/blog');
-    blogList.innerHTML = '';
-    if (!data.notes.length) {
-      blogList.innerHTML = '<p class="empty">Здесь появятся опубликованные карточки блога.</p>';
-      return;
-    }
-    data.notes.forEach((note) => {
-      const card = document.createElement('div');
-      card.className = 'note-card';
-      const title = document.createElement('h3');
-      title.textContent = note.title;
-      const meta = document.createElement('p');
-      meta.className = 'meta';
-      meta.textContent = `Обновлено ${formatDate(note.updated_at)} · Автор: ${note.author_email}`;
-      const body = document.createElement('pre');
-      const excerpt = note.content_md.length > 320 ? `${note.content_md.slice(0, 320)}…` : note.content_md;
-      body.textContent = excerpt;
-      card.append(title, meta, body);
-      blogList.appendChild(card);
-    });
-  } catch (e) {
-    blogList.innerHTML = '<p class="empty">Не удалось загрузить блог</p>';
-  }
+function resetNoteForm() {
+  state.editingNoteId = null;
+  noteIdInput.value = '';
+  noteForm.reset();
+  previewEl.textContent = '';
 }
 
 noteForm.addEventListener('input', (e) => {
@@ -189,13 +180,37 @@ noteForm.addEventListener('input', (e) => {
   }
 });
 
+noteForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const body = {
+    title: noteTitle.value,
+    content: noteContent.value,
+    published: notePublish.checked,
+  };
+  try {
+    if (state.editingNoteId) {
+      await api(`/api/notes/${state.editingNoteId}`, { method: 'PUT', body: JSON.stringify(body) });
+    } else {
+      await api('/api/notes', { method: 'POST', body: JSON.stringify(body) });
+    }
+    resetNoteForm();
+    await loadNotes();
+  } catch (err) {
+    alert('Не удалось сохранить карточку');
+  }
+});
+
+noteCancel.addEventListener('click', () => {
+  resetNoteForm();
+});
+
 authForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const formData = new FormData(authForm);
   const email = formData.get('email');
   const password = formData.get('password');
   loginBtn.disabled = true;
-  setStatus('Выполняем вход...');
+  setStatus('Вход...');
   try {
     await api('/api/login', { method: 'POST', body: JSON.stringify({ email, password }) });
     await loadProfile();
@@ -211,56 +226,147 @@ registerBtn.addEventListener('click', async () => {
   const formData = new FormData(authForm);
   const email = formData.get('email');
   const password = formData.get('password');
+  if (!email || !password) {
+    alert('Укажите почту и пароль');
+    return;
+  }
   try {
     await api('/api/register', { method: 'POST', body: JSON.stringify({ email, password }) });
-    setStatus('Аккаунт создан. Войдите.');
+    setStatus('Первый пользователь создан. Войдите.');
   } catch (err) {
-    alert('Не удалось зарегистрировать, возможно, почта уже существует.');
+    alert('Не удалось создать пользователя (возможно, уже существует).');
   }
 });
 
 logoutBtn.addEventListener('click', async () => {
   await api('/api/logout', { method: 'POST' });
-  authPanel.hidden = false;
-  profilePanel.hidden = true;
-  notesPanel.hidden = true;
-  setStatus('Вышли из аккаунта');
-  updatePasswordManagerLink('');
-  await loadBlog();
+  state.user = null;
+  hideDashboard();
 });
 
-profileForm.addEventListener('submit', async (e) => {
+userForm.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const body = {
-    full_name: fullNameInput.value,
-    phone: phoneInput.value,
-    password_manager_url: managerUrlInput.value,
+  const formData = new FormData(userForm);
+  const email = formData.get('user_email');
+  const password = formData.get('user_password');
+  const isAdmin = formData.get('user_is_admin') === 'on';
+  try {
+    await api('/api/admin/users', {
+      method: 'POST',
+      body: JSON.stringify({ email, password, is_admin: isAdmin }),
+    });
+    userForm.reset();
+    await loadUsers();
+  } catch (err) {
+    alert('Не удалось создать пользователя');
+  }
+});
+
+function joinPath(base, name) {
+  const cleanedBase = base.endsWith('/') ? base.slice(0, -1) : base;
+  return `${cleanedBase}/${name}`.replace(/\/+/g, '/');
+}
+
+async function loadFiles(path) {
+  state.currentPath = path || '/';
+  currentPathInput.value = state.currentPath;
+  try {
+    const encoded = encodeURIComponent(state.currentPath);
+    const data = await api(`/api/files?path=${encoded}`);
+    fileList.innerHTML = '';
+    const entries = data.entries || [];
+    if (state.currentPath !== '/') {
+      const upRow = document.createElement('div');
+      upRow.className = 'file-row';
+      upRow.innerHTML = '<strong>..</strong><span class="file-meta">Назад</span>';
+      upRow.addEventListener('click', () => {
+        const parts = state.currentPath.split('/').filter(Boolean);
+        parts.pop();
+        const newPath = '/' + parts.join('/');
+        loadFiles(newPath || '/');
+      });
+      fileList.appendChild(upRow);
+    }
+    if (!entries.length) {
+      const empty = document.createElement('p');
+      empty.className = 'empty';
+      empty.textContent = 'Пусто';
+      fileList.appendChild(empty);
+      return;
+    }
+    entries.forEach((entry) => {
+      const row = document.createElement('div');
+      row.className = 'file-row';
+      const title = document.createElement('div');
+      title.innerHTML = `<strong>${entry.name}</strong><div class="file-meta">${entry.is_dir ? 'папка' : 'файл'} · ${entry.size}b</div>`;
+      row.appendChild(title);
+      const actions = document.createElement('div');
+      actions.className = 'card-actions';
+      if (entry.is_dir) {
+        const openBtn = document.createElement('button');
+        openBtn.className = 'btn secondary';
+        openBtn.textContent = 'Открыть';
+        openBtn.addEventListener('click', () => loadFiles(joinPath(state.currentPath, entry.name)));
+        actions.appendChild(openBtn);
+      }
+      const delBtn = document.createElement('button');
+      delBtn.className = 'btn danger';
+      delBtn.textContent = 'Удалить';
+      delBtn.addEventListener('click', async () => {
+        const rel = joinPath(state.currentPath, entry.name);
+        await api(`/api/files?path=${encodeURIComponent(rel)}`, { method: 'DELETE' });
+        await loadFiles(state.currentPath);
+      });
+      actions.appendChild(delBtn);
+      row.appendChild(actions);
+      fileList.appendChild(row);
+    });
+  } catch (err) {
+    fileList.innerHTML = '<p class="empty">Не удалось загрузить файлы</p>';
+  }
+}
+
+refreshFilesBtn.addEventListener('click', () => loadFiles(currentPathInput.value || '/'));
+
+folderForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = folderNameInput.value.trim();
+  if (!name) return;
+  try {
+    await api('/api/files/folder', {
+      method: 'POST',
+      body: JSON.stringify({ path: state.currentPath, name }),
+    });
+    folderNameInput.value = '';
+    await loadFiles(state.currentPath);
+  } catch (err) {
+    alert('Не удалось создать папку');
+  }
+});
+
+uploadForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const file = fileInput.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async () => {
+    const contentBase64 = reader.result.split(',')[1];
+    try {
+      await api('/api/files/upload', {
+        method: 'POST',
+        body: JSON.stringify({
+          path: state.currentPath,
+          name: file.name,
+          content_base64: contentBase64,
+        }),
+      });
+      fileInput.value = '';
+      await loadFiles(state.currentPath);
+    } catch (err) {
+      alert('Не удалось загрузить файл');
+    }
   };
-  try {
-    await api('/api/me', { method: 'PUT', body: JSON.stringify(body) });
-    setStatus('Профиль обновлён');
-    await loadProfile();
-  } catch (err) {
-    alert('Не удалось сохранить профиль');
-  }
-});
-
-noteForm.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const formData = new FormData(noteForm);
-  const title = formData.get('title');
-  const content = formData.get('content');
-  const publish = formData.get('publish') === 'on';
-  try {
-    await api('/api/notes', { method: 'POST', body: JSON.stringify({ title, content, published: publish }) });
-    noteForm.reset();
-    previewEl.textContent = '';
-    await loadNotes();
-    await loadBlog();
-  } catch (err) {
-    alert('Не удалось сохранить заметку');
-  }
+  reader.readAsDataURL(file);
 });
 
 loadProfile();
-loadBlog();

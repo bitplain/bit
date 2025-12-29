@@ -7,11 +7,12 @@ import secrets
 import sqlite3
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 DB_PATH = os.environ.get("DB_PATH", "/data/app.db")
 APP_SECRET = os.environ.get("APP_SECRET", "dev-secret")
 FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "http://localhost:4173")
+FILES_ROOT = os.environ.get("FILES_ROOT", "/data/files")
 
 
 def ensure_column(conn, table: str, column: str, definition: str):
@@ -22,6 +23,7 @@ def ensure_column(conn, table: str, column: str, definition: str):
 
 def ensure_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    os.makedirs(FILES_ROOT, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
         """
@@ -32,6 +34,7 @@ def ensure_db():
             full_name TEXT,
             phone TEXT,
             password_manager_url TEXT,
+            is_admin INTEGER NOT NULL DEFAULT 0,
             created_at INTEGER NOT NULL
         )
         """
@@ -62,6 +65,7 @@ def ensure_db():
         """
     )
     ensure_column(conn, "users", "password_manager_url", "TEXT")
+    ensure_column(conn, "users", "is_admin", "INTEGER NOT NULL DEFAULT 0")
     ensure_column(conn, "notes", "published", "INTEGER NOT NULL DEFAULT 0")
     conn.commit()
     conn.close()
@@ -117,6 +121,15 @@ def clean_url(value: str) -> str:
     return url
 
 
+def resolve_path(rel_path: str) -> str:
+    rel = (rel_path or "").strip()
+    rel = rel.lstrip("/")
+    safe_path = os.path.normpath(os.path.join(FILES_ROOT, rel))
+    if not safe_path.startswith(os.path.abspath(FILES_ROOT)):
+        raise ValueError("invalid_path")
+    return safe_path
+
+
 def parse_json(handler: BaseHTTPRequestHandler):
     length = int(handler.headers.get("Content-Length", "0"))
     raw = handler.rfile.read(length) if length else b""
@@ -165,12 +178,16 @@ def with_session(handler: BaseHTTPRequestHandler):
     conn = get_conn()
     now = int(time.time())
     row = conn.execute(
-        "SELECT sessions.token, sessions.user_id, users.email, users.full_name, users.phone, users.password_manager_url "
+        "SELECT sessions.token, sessions.user_id, users.email, users.full_name, users.phone, users.password_manager_url, users.is_admin "
         "FROM sessions JOIN users ON users.id = sessions.user_id WHERE sessions.token = ? AND sessions.expires_at > ?",
         (token, now),
     ).fetchone()
     conn.close()
     return row
+
+
+def is_admin(session) -> bool:
+    return bool(session and len(session) > 6 and session[6])
 
 
 class AppHandler(BaseHTTPRequestHandler):
@@ -202,6 +219,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 "full_name": simple_decrypt(session[3]) if session[3] else None,
                 "phone": simple_decrypt(session[4]) if session[4] else None,
                 "password_manager_url": simple_decrypt(session[5]) if session[5] else None,
+                "is_admin": bool(session[6]),
             }
             json_response(self, 200, {"user": user})
             return
@@ -211,6 +229,9 @@ class AppHandler(BaseHTTPRequestHandler):
             if not session:
                 json_response(self, 401, {"error": "auth_required"})
                 return
+            if not is_admin(session):
+                json_response(self, 403, {"error": "admin_only"})
+                return
             conn = get_conn()
             rows = conn.execute(
                 "SELECT id, title, content_md, published, created_at, updated_at FROM notes WHERE user_id = ? ORDER BY updated_at DESC",
@@ -219,6 +240,61 @@ class AppHandler(BaseHTTPRequestHandler):
             conn.close()
             notes = [dict(row) for row in rows]
             json_response(self, 200, {"notes": notes})
+            return
+
+        if parsed.path == "/api/admin/users":
+            session = with_session(self)
+            if not session:
+                json_response(self, 401, {"error": "auth_required"})
+                return
+            if not is_admin(session):
+                json_response(self, 403, {"error": "admin_only"})
+                return
+            conn = get_conn()
+            rows = conn.execute(
+                "SELECT id, email, is_admin, created_at FROM users ORDER BY created_at DESC"
+            ).fetchall()
+            conn.close()
+            users = [
+                {
+                    "id": row["id"],
+                    "email": row["email"],
+                    "is_admin": bool(row["is_admin"]),
+                    "created_at": row["created_at"],
+                }
+                for row in rows
+            ]
+            json_response(self, 200, {"users": users})
+            return
+
+        if parsed.path == "/api/files":
+            session = with_session(self)
+            if not session:
+                json_response(self, 401, {"error": "auth_required"})
+                return
+            if not is_admin(session):
+                json_response(self, 403, {"error": "admin_only"})
+                return
+            qs = parse_qs(parsed.query)
+            rel = qs.get("path", [""])[0]
+            try:
+                target = resolve_path(rel)
+            except ValueError:
+                json_response(self, 400, {"error": "invalid_path"})
+                return
+            entries = []
+            if os.path.exists(target):
+                for entry in os.scandir(target):
+                    info = entry.stat()
+                    entries.append(
+                        {
+                            "name": entry.name,
+                            "is_dir": entry.is_dir(),
+                            "size": info.st_size,
+                            "modified": int(info.st_mtime),
+                        }
+                    )
+            json_response(self, 200, {"path": rel, "entries": entries})
             return
 
         if parsed.path == "/api/blog":
@@ -250,22 +326,25 @@ class AppHandler(BaseHTTPRequestHandler):
             data = parse_json(self)
             email = (data.get("email") or "").strip().lower()
             password = data.get("password") or ""
-            full_name = data.get("full_name") or ""
-            phone = data.get("phone") or ""
+            full_name = (data.get("full_name") or "").strip()
+            phone = (data.get("phone") or "").strip()
             password_manager_url = clean_url(data.get("password_manager_url"))
             if not email or not password:
                 json_response(self, 400, {"error": "email_and_password_required"})
                 return
             conn = get_conn()
+            total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            is_admin = 1 if total_users == 0 else 0
             try:
                 conn.execute(
-                    "INSERT INTO users (email, password_hash, full_name, phone, password_manager_url, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO users (email, password_hash, full_name, phone, password_manager_url, is_admin, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (
                         email,
                         hash_password(password),
                         simple_encrypt(full_name) if full_name else None,
                         simple_encrypt(phone) if phone else None,
                         simple_encrypt(password_manager_url) if password_manager_url else None,
+                        is_admin,
                         int(time.time()),
                     ),
                 )
@@ -324,10 +403,99 @@ class AppHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"ok": True}).encode())
             return
 
+        if parsed.path == "/api/admin/users":
+            session = with_session(self)
+            if not session:
+                json_response(self, 401, {"error": "auth_required"})
+                return
+            if not is_admin(session):
+                json_response(self, 403, {"error": "admin_only"})
+                return
+            data = parse_json(self)
+            email = (data.get("email") or "").strip().lower()
+            password = data.get("password") or ""
+            make_admin = 1 if data.get("is_admin") else 0
+            if not email or not password:
+                json_response(self, 400, {"error": "email_and_password_required"})
+                return
+            conn = get_conn()
+            try:
+                conn.execute(
+                    "INSERT INTO users (email, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?)",
+                    (email, hash_password(password), make_admin, int(time.time())),
+                )
+                conn.commit()
+            except sqlite3.IntegrityError:
+                conn.close()
+                json_response(self, 409, {"error": "email_exists"})
+                return
+            conn.close()
+            json_response(self, 201, {"ok": True})
+            return
+
+        if parsed.path == "/api/files/upload":
+            session = with_session(self)
+            if not session:
+                json_response(self, 401, {"error": "auth_required"})
+                return
+            if not is_admin(session):
+                json_response(self, 403, {"error": "admin_only"})
+                return
+            data = parse_json(self)
+            rel_path = data.get("path") or ""
+            name = data.get("name") or ""
+            content_b64 = data.get("content_base64") or ""
+            if not name or not content_b64:
+                json_response(self, 400, {"error": "name_and_content_required"})
+                return
+            try:
+                target_dir = resolve_path(rel_path)
+                os.makedirs(target_dir, exist_ok=True)
+                content = base64.b64decode(content_b64.encode())
+                dest = resolve_path(os.path.join(rel_path, name))
+                if os.path.isdir(dest):
+                    json_response(self, 400, {"error": "path_is_directory"})
+                    return
+                with open(dest, "wb") as f:
+                    f.write(content)
+                json_response(self, 201, {"ok": True})
+            except ValueError:
+                json_response(self, 400, {"error": "invalid_path"})
+            except Exception:
+                json_response(self, 500, {"error": "write_failed"})
+            return
+
+        if parsed.path == "/api/files/folder":
+            session = with_session(self)
+            if not session:
+                json_response(self, 401, {"error": "auth_required"})
+                return
+            if not is_admin(session):
+                json_response(self, 403, {"error": "admin_only"})
+                return
+            data = parse_json(self)
+            rel_path = data.get("path") or ""
+            name = (data.get("name") or "").strip()
+            if not name:
+                json_response(self, 400, {"error": "name_required"})
+                return
+            try:
+                target = resolve_path(os.path.join(rel_path, name))
+                os.makedirs(target, exist_ok=True)
+                json_response(self, 201, {"ok": True})
+            except ValueError:
+                json_response(self, 400, {"error": "invalid_path"})
+            except Exception:
+                json_response(self, 500, {"error": "mkdir_failed"})
+            return
+
         if parsed.path == "/api/notes":
             session = with_session(self)
             if not session:
                 json_response(self, 401, {"error": "auth_required"})
+                return
+            if not is_admin(session):
+                json_response(self, 403, {"error": "admin_only"})
                 return
             data = parse_json(self)
             title = (data.get("title") or "").strip()
@@ -380,6 +548,9 @@ class AppHandler(BaseHTTPRequestHandler):
             if not session:
                 json_response(self, 401, {"error": "auth_required"})
                 return
+            if not is_admin(session):
+                json_response(self, 403, {"error": "admin_only"})
+                return
             try:
                 note_id = int(parsed.path.split("/")[-1])
             except ValueError:
@@ -423,6 +594,9 @@ class AppHandler(BaseHTTPRequestHandler):
             if not session:
                 json_response(self, 401, {"error": "auth_required"})
                 return
+            if not is_admin(session):
+                json_response(self, 403, {"error": "admin_only"})
+                return
             try:
                 note_id = int(parsed.path.split("/")[-1])
             except ValueError:
@@ -436,6 +610,33 @@ class AppHandler(BaseHTTPRequestHandler):
             conn.commit()
             conn.close()
             json_response(self, 200, {"ok": True})
+            return
+        if parsed.path == "/api/files":
+            session = with_session(self)
+            if not session:
+                json_response(self, 401, {"error": "auth_required"})
+                return
+            if not is_admin(session):
+                json_response(self, 403, {"error": "admin_only"})
+                return
+            qs = parse_qs(parsed.query)
+            rel = qs.get("path", [""])[0]
+            try:
+                target = resolve_path(rel)
+                if os.path.isdir(target):
+                    if os.listdir(target):
+                        json_response(self, 400, {"error": "dir_not_empty"})
+                        return
+                    os.rmdir(target)
+                elif os.path.isfile(target):
+                    os.remove(target)
+                json_response(self, 200, {"ok": True})
+            except ValueError:
+                json_response(self, 400, {"error": "invalid_path"})
+            except FileNotFoundError:
+                json_response(self, 404, {"error": "not_found"})
+            except Exception:
+                json_response(self, 500, {"error": "delete_failed"})
             return
         json_response(self, 404, {"error": "not_found"})
 
