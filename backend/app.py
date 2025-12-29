@@ -21,7 +21,7 @@ ADMIN_SEED_MARKER = os.path.join(os.path.dirname(DB_PATH) or ".", ".admin_seeded
 def ensure_column(conn, table: str, column: str, definition: str):
     cols = [row[1] for row in conn.execute(f"PRAGMA table_info({table})")]
     if column not in cols:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 def ensure_db():

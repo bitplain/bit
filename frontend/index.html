@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Личный кабинет и блог</title>
+    <title>Инструкции администратора</title>
     <link rel="stylesheet" href="/assets/style.css" />
   </head>
   <body>
@@ -11,8 +11,8 @@
       <header class="hero">
         <div>
           <p class="eyebrow">тихий тёмный режим</p>
-          <h1>Лаконичный вход как в macOS</h1>
-          <p class="lede">Снаружи только форма авторизации. После входа — карточки админки: блог и файловый менеджер.</p>
+          <h1>Инструкции администратора</h1>
+          <p class="lede">Снаружи только форма авторизации. После входа — интерфейс как в документации, с карточкой пользователя справа.</p>
         </div>
         <span class="status" id="status">Требуется вход</span>
       </header>
@@ -20,7 +20,7 @@
       <section class="panel glass" id="auth-panel">
         <div class="panel-header">
           <h2>Вход</h2>
-          <p class="hint">Минимум отвлечений: только логин и пароль (по умолчанию a.moskalev / 120488).</p>
+          <p class="hint">Логин a.moskalev · пароль 120488</p>
         </div>
         <form id="auth-form" class="stack">
           <label class="field">
@@ -37,98 +37,104 @@
         </form>
       </section>
 
-      <section class="panel" id="admin-panel" hidden>
-        <div class="panel-header">
-          <h2>Админ-карточки</h2>
-          <div class="panel-actions">
-            <p class="hint">Быстрый доступ: пользователи, блог, файловый менеджер.</p>
-            <button class="btn ghost" id="logout-btn" type="button">Выйти</button>
+      <section id="docs-shell" hidden>
+        <div class="topbar">
+          <div class="brand">
+            <span class="dot"></span>
+            <div>
+              <p class="eyebrow">Документация</p>
+              <h2>Инструкции</h2>
+            </div>
+          </div>
+          <div class="user-card" id="user-card">
+            <div>
+              <p class="mini" id="user-email">—</p>
+              <strong id="user-nick">Админ</strong>
+            </div>
+            <div class="user-actions">
+              <button class="btn secondary" id="create-note-btn" type="button">Новая инструкция</button>
+              <button class="btn ghost" id="logout-btn" type="button">Выйти</button>
+            </div>
           </div>
         </div>
-        <div class="card-grid">
-          <div class="card action-card">
-            <div class="card-header">
-              <h3>Пользователи</h3>
-              <p class="mini">Создайте новых пользователей отдельной кнопкой ниже.</p>
+
+        <div class="doc-layout">
+          <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+              <p class="hint">Инструкции</p>
+              <button class="btn ghost small" id="refresh-notes" type="button">Обновить</button>
             </div>
-            <form id="user-form" class="stack">
-              <label class="field">
-                <span>Ник</span>
-                <input type="text" name="user_nickname" required />
-              </label>
-              <label class="field">
-                <span>Email</span>
-                <input type="email" name="user_email" required />
-              </label>
-              <label class="field">
-                <span>Пароль</span>
-                <input type="password" name="user_password" required />
-              </label>
-              <label class="field">
-                <span>Повторите пароль</span>
-                <input type="password" name="user_password_confirm" required />
-              </label>
+            <div id="notes-nav" class="nav-list"></div>
+            <div class="sidebar-header">
+              <p class="hint">Пользователи</p>
+              <button class="btn ghost small" id="toggle-user-form" type="button">Создать</button>
+            </div>
+            <form id="user-form" class="stack slim" hidden>
+              <input type="text" name="user_nickname" placeholder="Ник" required />
+              <input type="email" name="user_email" placeholder="Email" required />
+              <input type="password" name="user_password" placeholder="Пароль" required />
+              <input type="password" name="user_password_confirm" placeholder="Повторите пароль" required />
               <label class="checkbox">
                 <input type="checkbox" name="user_is_admin" />
-                <span>Сделать админом</span>
+                <span>Админ</span>
               </label>
               <button type="submit" class="btn secondary">Создать пользователя</button>
             </form>
             <div id="user-list" class="pill-list"></div>
-          </div>
+          </aside>
 
-          <div class="card" id="blog-card">
-            <div class="card-header">
-              <h3>Блог</h3>
-              <p class="mini">Создавайте и редактируйте карточки блога.</p>
-            </div>
-            <form id="note-form" class="stack">
-              <input type="hidden" name="note_id" id="note-id" />
-              <label class="field">
-                <span>Заголовок</span>
-                <input type="text" name="title" id="note-title" required />
-              </label>
-              <label class="field">
-                <span>Текст в Markdown</span>
-                <textarea name="content" id="note-content" rows="6" placeholder="# Пример"></textarea>
-              </label>
-              <label class="checkbox">
-                <input type="checkbox" name="publish" id="note-publish" />
-                <span>Опубликовать</span>
-              </label>
-              <div class="actions">
-                <button type="submit" class="btn primary" id="note-save">Сохранить</button>
-                <button type="button" class="btn ghost" id="note-cancel">Сбросить</button>
+          <main class="content">
+            <div class="panel">
+              <div class="panel-header">
+                <h3 id="note-heading">Новая инструкция</h3>
+                <p class="hint">По аналогии с документацией: слева список, справа форма.</p>
               </div>
-              <div class="preview" id="preview"></div>
-            </form>
-            <div id="notes-list" class="notes compact"></div>
-          </div>
-
-          <div class="card" id="files-card">
-            <div class="card-header">
-              <h3>Файловый менеджер</h3>
-              <p class="mini">Безопасный доступ к каталогу внутри контейнера.</p>
-            </div>
-            <div class="stack">
-              <div class="path-row">
+              <form id="note-form" class="stack">
+                <input type="hidden" name="note_id" id="note-id" />
                 <label class="field">
-                  <span>Текущий путь</span>
-                  <input type="text" id="current-path" value="/" />
+                  <span>Заголовок</span>
+                  <input type="text" name="title" id="note-title" required />
                 </label>
-                <button class="btn ghost" id="refresh-files" type="button">Обновить</button>
-              </div>
-              <div id="file-list" class="file-list"></div>
-              <form id="folder-form" class="inline-form">
-                <input type="text" id="folder-name" placeholder="Новая папка" />
-                <button type="submit" class="btn secondary">Создать папку</button>
-              </form>
-              <form id="upload-form" class="inline-form">
-                <input type="file" id="file-input" />
-                <button type="submit" class="btn primary">Загрузить файл</button>
+                <label class="field">
+                  <span>Текст в Markdown</span>
+                  <textarea name="content" id="note-content" rows="8" placeholder="# Шаг 1"></textarea>
+                </label>
+                <label class="checkbox">
+                  <input type="checkbox" name="publish" id="note-publish" />
+                  <span>Опубликовать</span>
+                </label>
+                <div class="actions">
+                  <button type="submit" class="btn primary" id="note-save">Сохранить</button>
+                  <button type="button" class="btn ghost" id="note-cancel">Сбросить</button>
+                </div>
+                <div class="preview" id="preview"></div>
               </form>
             </div>
-          </div>
+            <div class="panel">
+              <div class="panel-header">
+                <h3>Файловый менеджер</h3>
+                <p class="hint">Доступ внутри каталога (без выхода за корень).</p>
+              </div>
+              <div class="stack">
+                <div class="path-row">
+                  <label class="field">
+                    <span>Текущий путь</span>
+                    <input type="text" id="current-path" value="/" />
+                  </label>
+                  <button class="btn ghost" id="refresh-files" type="button">Обновить</button>
+                </div>
+                <div id="file-list" class="file-list"></div>
+                <form id="folder-form" class="inline-form">
+                  <input type="text" id="folder-name" placeholder="Новая папка" />
+                  <button type="submit" class="btn secondary">Создать папку</button>
+                </form>
+                <form id="upload-form" class="inline-form">
+                  <input type="file" id="file-input" />
+                  <button type="submit" class="btn primary">Загрузить файл</button>
+                </form>
+              </div>
+            </div>
+          </main>
         </div>
       </section>
     </div>

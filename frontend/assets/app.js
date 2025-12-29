@@ -1,11 +1,19 @@
 const API_BASE = 'http://localhost:8000';
 
 const authPanel = document.getElementById('auth-panel');
-const adminPanel = document.getElementById('admin-panel');
+const docsShell = document.getElementById('docs-shell');
 const authForm = document.getElementById('auth-form');
 const loginBtn = document.getElementById('login-btn');
 const logoutBtn = document.getElementById('logout-btn');
 const statusEl = document.getElementById('status');
+
+const userCardEmail = document.getElementById('user-email');
+const userCardNick = document.getElementById('user-nick');
+const createNoteBtn = document.getElementById('create-note-btn');
+
+const notesNav = document.getElementById('notes-nav');
+const refreshNotesBtn = document.getElementById('refresh-notes');
+const noteHeading = document.getElementById('note-heading');
 
 const noteForm = document.getElementById('note-form');
 const noteIdInput = document.getElementById('note-id');
@@ -14,7 +22,6 @@ const noteContent = document.getElementById('note-content');
 const notePublish = document.getElementById('note-publish');
 const noteCancel = document.getElementById('note-cancel');
 const previewEl = document.getElementById('preview');
-const notesList = document.getElementById('notes-list');
 
 const userForm = document.getElementById('user-form');
 const userList = document.getElementById('user-list');
@@ -23,6 +30,7 @@ const userEmail = userForm?.querySelector('input[name="user_email"]');
 const userPassword = userForm?.querySelector('input[name="user_password"]');
 const userPasswordConfirm = userForm?.querySelector('input[name="user_password_confirm"]');
 const userIsAdmin = userForm?.querySelector('input[name="user_is_admin"]');
+const toggleUserFormBtn = document.getElementById('toggle-user-form');
 
 const currentPathInput = document.getElementById('current-path');
 const refreshFilesBtn = document.getElementById('refresh-files');
@@ -35,6 +43,7 @@ const fileInput = document.getElementById('file-input');
 const state = {
   user: null,
   editingNoteId: null,
+  notes: [],
   currentPath: '/',
 };
 
@@ -60,12 +69,14 @@ function formatDate(ts) {
 
 function showDashboard(user) {
   authPanel.hidden = true;
-  adminPanel.hidden = false;
+  docsShell.hidden = false;
   setStatus(`Админ: ${user.email}`);
+  userCardEmail.textContent = user.email;
+  userCardNick.textContent = user.nickname || 'Админ';
 }
 
 function hideDashboard() {
-  adminPanel.hidden = true;
+  docsShell.hidden = true;
   authPanel.hidden = false;
   setStatus('Требуется вход');
 }
@@ -102,80 +113,75 @@ async function loadUsers() {
   }
 }
 
+function renderNotesNav() {
+  notesNav.innerHTML = '';
+  if (!state.notes.length) {
+    notesNav.innerHTML = '<p class="empty">Пока нет инструкций</p>';
+    return;
+  }
+  state.notes.forEach((note) => {
+    const item = document.createElement('div');
+    item.className = 'nav-item';
+    if (state.editingNoteId === note.id) item.classList.add('active');
+    const title = document.createElement('div');
+    title.textContent = note.title;
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = `${note.published ? 'Опубликовано' : 'Черновик'} · ${formatDate(note.updated_at)}`;
+    const actions = document.createElement('div');
+    actions.className = 'card-actions';
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = 'btn ghost small';
+    toggleBtn.textContent = note.published ? 'Снять' : 'Опубликовать';
+    toggleBtn.addEventListener('click', async (evt) => {
+      evt.stopPropagation();
+      await api(`/api/notes/${note.id}`, { method: 'PUT', body: JSON.stringify({ published: !note.published }) });
+      await loadNotes();
+    });
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'btn danger small';
+    deleteBtn.textContent = 'Удалить';
+    deleteBtn.addEventListener('click', async (evt) => {
+      evt.stopPropagation();
+      await api(`/api/notes/${note.id}`, { method: 'DELETE' });
+      await loadNotes();
+    });
+    actions.append(toggleBtn, deleteBtn);
+    item.append(title, meta, actions);
+    item.addEventListener('click', () => loadNoteIntoForm(note));
+    notesNav.appendChild(item);
+  });
+}
+
+function loadNoteIntoForm(note) {
+  state.editingNoteId = note.id;
+  noteHeading.textContent = 'Редактирование инструкции';
+  noteIdInput.value = note.id;
+  noteTitle.value = note.title;
+  noteContent.value = note.content_md;
+  notePublish.checked = !!note.published;
+  previewEl.textContent = note.content_md;
+  renderNotesNav();
+  noteTitle.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 async function loadNotes() {
   try {
     const data = await api('/api/notes');
-    notesList.innerHTML = '';
-    if (!data.notes.length) {
-      notesList.innerHTML = '<p class="empty">Ещё нет записей. Создайте первую карточку блога.</p>';
-      return;
-    }
-    data.notes.forEach((note) => {
-      const card = document.createElement('div');
-      card.className = 'note-card';
-
-      const title = document.createElement('h3');
-      title.textContent = note.title;
-
-      const meta = document.createElement('p');
-      meta.className = 'meta';
-      meta.textContent = `Обновлено ${formatDate(note.updated_at)}`;
-
-      const badge = document.createElement('span');
-      badge.className = `badge ${note.published ? 'published' : 'draft'}`;
-      badge.textContent = note.published ? 'Опубликовано' : 'Черновик';
-
-      const body = document.createElement('pre');
-      body.textContent = note.content_md || '—';
-
-      const actions = document.createElement('div');
-      actions.className = 'card-actions';
-
-      const editBtn = document.createElement('button');
-      editBtn.className = 'btn secondary';
-      editBtn.textContent = 'Редактировать';
-      editBtn.addEventListener('click', () => {
-        state.editingNoteId = note.id;
-        noteIdInput.value = note.id;
-        noteTitle.value = note.title;
-        noteContent.value = note.content_md;
-        notePublish.checked = !!note.published;
-        previewEl.textContent = note.content_md;
-      });
-
-      const toggleBtn = document.createElement('button');
-      toggleBtn.className = note.published ? 'btn ghost' : 'btn secondary';
-      toggleBtn.textContent = note.published ? 'Снять с публикации' : 'Опубликовать';
-      toggleBtn.addEventListener('click', async () => {
-        await api(`/api/notes/${note.id}`, {
-          method: 'PUT',
-          body: JSON.stringify({ published: !note.published }),
-        });
-        await loadNotes();
-      });
-
-      const deleteBtn = document.createElement('button');
-      deleteBtn.className = 'btn danger';
-      deleteBtn.textContent = 'Удалить';
-      deleteBtn.addEventListener('click', async () => {
-        await api(`/api/notes/${note.id}`, { method: 'DELETE' });
-        await loadNotes();
-      });
-
-      actions.append(editBtn, toggleBtn, deleteBtn);
-      card.append(title, badge, meta, body, actions);
-      notesList.appendChild(card);
-    });
+    state.notes = data.notes;
+    renderNotesNav();
   } catch (e) {
-    notesList.innerHTML = '<p class="empty">Не удалось загрузить блог</p>';
+    notesNav.innerHTML = '<p class="empty">Не удалось загрузить инструкции</p>';
   }
 }
 
 function resetNoteForm() {
   state.editingNoteId = null;
+  noteHeading.textContent = 'Новая инструкция';
   noteIdInput.value = '';
   noteForm.reset();
   previewEl.textContent = '';
+  renderNotesNav();
 }
 
 noteForm.addEventListener('input', (e) => {
@@ -200,13 +206,20 @@ noteForm.addEventListener('submit', async (e) => {
     resetNoteForm();
     await loadNotes();
   } catch (err) {
-    alert('Не удалось сохранить карточку');
+    alert('Не удалось сохранить инструкцию');
   }
 });
 
 noteCancel.addEventListener('click', () => {
   resetNoteForm();
 });
+
+createNoteBtn.addEventListener('click', () => {
+  resetNoteForm();
+  noteTitle.focus();
+});
+
+refreshNotesBtn.addEventListener('click', () => loadNotes());
 
 authForm.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -230,6 +243,12 @@ logoutBtn.addEventListener('click', async () => {
   await api('/api/logout', { method: 'POST' });
   state.user = null;
   hideDashboard();
+});
+
+toggleUserFormBtn.addEventListener('click', () => {
+  const isHidden = userForm.hidden;
+  userForm.hidden = !isHidden;
+  toggleUserFormBtn.textContent = isHidden ? 'Скрыть' : 'Создать';
 });
 
 userForm.addEventListener('submit', async (e) => {
