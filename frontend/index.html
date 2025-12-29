@@ -3,54 +3,83 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Personal Space</title>
+    <title>Личный кабинет и блог</title>
     <link rel="stylesheet" href="/assets/style.css" />
   </head>
   <body>
     <div id="app" class="page">
       <header class="hero">
-        <div>
-          <p class="eyebrow">персональный прототип</p>
-          <h1>Лаконичный личный кабинет</h1>
-          <p class="lede">Авторизация, заметки в Markdown и компактный Apple‑подобный дизайн.</p>
+        <div class="hero-copy">
+          <p class="eyebrow">тёмный режим · персональный блог</p>
+          <h1>Личный кабинет + карточки блога</h1>
+          <p class="lede">
+            Добавляйте записи в закрытом кабинете, публикуйте их в блог карточками и держите под рукой ссылку на свой менеджер паролей.
+          </p>
+          <div class="hero-actions">
+            <a id="password-manager-link" class="pill-link" target="_blank" rel="noreferrer">Добавьте ссылку на менеджер паролей</a>
+            <span class="status" id="status">Требуется вход</span>
+          </div>
         </div>
-        <div class="status" id="status"></div>
+        <div class="hero-card">
+          <p class="tag">Блог из кабинета</p>
+          <h3>Публикации и черновики раздельно</h3>
+          <p class="mini">Карточки с публикуемыми записями доступны на отдельной секции блога.</p>
+        </div>
       </header>
 
-      <section class="panel" id="auth-panel">
-        <div class="panel-header">
-          <h2>Авторизация</h2>
-          <p class="hint">Введите почту и пароль. Для первого входа создайте аккаунт.</p>
-        </div>
-        <form id="auth-form" class="stack">
-          <label class="field">
-            <span>Почта</span>
-            <input type="email" name="email" required />
-          </label>
-          <label class="field">
-            <span>Пароль</span>
-            <input type="password" name="password" required />
-          </label>
-          <div class="actions">
-            <button type="submit" class="btn primary" id="login-btn">Войти</button>
-            <button type="button" class="btn ghost" id="register-btn">Зарегистрироваться</button>
+      <div class="grid two-columns">
+        <section class="panel" id="auth-panel">
+          <div class="panel-header">
+            <h2>Войти в личный кабинет</h2>
+            <p class="hint">Создайте аккаунт один раз, дальше используйте email и пароль.</p>
           </div>
-        </form>
-      </section>
+          <form id="auth-form" class="stack">
+            <label class="field">
+              <span>Почта</span>
+              <input type="email" name="email" required />
+            </label>
+            <label class="field">
+              <span>Пароль</span>
+              <input type="password" name="password" required />
+            </label>
+            <div class="actions">
+              <button type="submit" class="btn primary" id="login-btn">Войти</button>
+              <button type="button" class="btn ghost" id="register-btn">Зарегистрироваться</button>
+            </div>
+          </form>
+        </section>
 
-      <section class="panel" id="profile-panel" hidden>
-        <div class="panel-header">
-          <h2>Профиль</h2>
-          <p class="hint">Данные хранятся в SQLite, токен — в httpOnly cookie.</p>
-        </div>
-        <div class="profile-grid" id="profile-data"></div>
-        <button class="btn ghost" id="logout-btn">Выйти</button>
-      </section>
+        <section class="panel" id="profile-panel" hidden>
+          <div class="panel-header">
+            <h2>Профиль и доступ</h2>
+            <p class="hint">Ссылка на менеджер паролей выводится в шапке, а данные шифруются на сервере.</p>
+          </div>
+          <div class="profile-grid" id="profile-data"></div>
+          <form id="profile-form" class="stack profile-form">
+            <label class="field">
+              <span>Имя или подпись автора</span>
+              <input type="text" name="full_name" id="full-name" placeholder="Например, ваше имя" />
+            </label>
+            <label class="field">
+              <span>Телефон (необязательно)</span>
+              <input type="tel" name="phone" id="phone" placeholder="+7..." />
+            </label>
+            <label class="field">
+              <span>Ссылка на менеджер паролей</span>
+              <input type="url" name="password_manager_url" id="manager-url" placeholder="https://vault.my-domain" />
+            </label>
+            <div class="actions">
+              <button type="submit" class="btn primary">Сохранить профиль</button>
+              <button type="button" class="btn ghost" id="logout-btn">Выйти</button>
+            </div>
+          </form>
+        </section>
+      </div>
 
       <section class="panel" id="notes-panel" hidden>
         <div class="panel-header">
-          <h2>Заметки</h2>
-          <p class="hint">Введите Markdown — предпросмотр сразу под формой.</p>
+          <h2>Личный кабинет: записи блога</h2>
+          <p class="hint">Черновики остаются у вас, опубликованные карточки уходят в публичный блог ниже.</p>
         </div>
         <form id="note-form" class="stack">
           <label class="field">
@@ -61,10 +90,22 @@
             <span>Текст в Markdown</span>
             <textarea name="content" rows="6" placeholder="# Пример"></textarea>
           </label>
+          <label class="checkbox">
+            <input type="checkbox" name="publish" />
+            <span>Сразу опубликовать карточку в блоге</span>
+          </label>
           <div class="preview" id="preview"></div>
           <button type="submit" class="btn primary">Сохранить</button>
         </form>
         <div id="notes-list" class="notes"></div>
+      </section>
+
+      <section class="panel" id="blog-panel">
+        <div class="panel-header">
+          <h2>Публичный блог</h2>
+          <p class="hint">Список карточек, которые вы отметили как опубликованные.</p>
+        </div>
+        <div id="blog-list" class="notes"></div>
       </section>
     </div>
     <script type="module" src="/assets/app.js"></script>

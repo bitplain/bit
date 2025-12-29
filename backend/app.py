@@ -14,6 +14,12 @@ APP_SECRET = os.environ.get("APP_SECRET", "dev-secret")
 FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "http://localhost:4173")
 
 
+def ensure_column(conn, table: str, column: str, definition: str):
+    cols = [row[1] for row in conn.execute(f"PRAGMA table_info({table})")]
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
+
+
 def ensure_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
@@ -25,6 +31,7 @@ def ensure_db():
             password_hash TEXT NOT NULL,
             full_name TEXT,
             phone TEXT,
+            password_manager_url TEXT,
             created_at INTEGER NOT NULL
         )
         """
@@ -47,12 +54,15 @@ def ensure_db():
             user_id INTEGER NOT NULL,
             title TEXT NOT NULL,
             content_md TEXT NOT NULL,
+            published INTEGER NOT NULL DEFAULT 0,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
             FOREIGN KEY(user_id) REFERENCES users(id)
         )
         """
     )
+    ensure_column(conn, "users", "password_manager_url", "TEXT")
+    ensure_column(conn, "notes", "published", "INTEGER NOT NULL DEFAULT 0")
     conn.commit()
     conn.close()
 
@@ -96,6 +106,15 @@ def simple_decrypt(ciphertext: str) -> str:
         return plain.decode()
     except Exception:
         return ""
+
+
+def clean_url(value: str) -> str:
+    url = (value or "").strip()
+    if not url:
+        return ""
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    return url
 
 
 def parse_json(handler: BaseHTTPRequestHandler):
@@ -146,8 +165,8 @@ def with_session(handler: BaseHTTPRequestHandler):
     conn = get_conn()
     now = int(time.time())
     row = conn.execute(
-        "SELECT sessions.token, sessions.user_id, users.email, users.full_name, users.phone FROM sessions "
-        "JOIN users ON users.id = sessions.user_id WHERE sessions.token = ? AND sessions.expires_at > ?",
+        "SELECT sessions.token, sessions.user_id, users.email, users.full_name, users.phone, users.password_manager_url "
+        "FROM sessions JOIN users ON users.id = sessions.user_id WHERE sessions.token = ? AND sessions.expires_at > ?",
         (token, now),
     ).fetchone()
     conn.close()
@@ -182,6 +201,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 "email": session[2],
                 "full_name": simple_decrypt(session[3]) if session[3] else None,
                 "phone": simple_decrypt(session[4]) if session[4] else None,
+                "password_manager_url": simple_decrypt(session[5]) if session[5] else None,
             }
             json_response(self, 200, {"user": user})
             return
@@ -193,11 +213,32 @@ class AppHandler(BaseHTTPRequestHandler):
                 return
             conn = get_conn()
             rows = conn.execute(
-                "SELECT id, title, content_md, created_at, updated_at FROM notes WHERE user_id = ? ORDER BY updated_at DESC",
+                "SELECT id, title, content_md, published, created_at, updated_at FROM notes WHERE user_id = ? ORDER BY updated_at DESC",
                 (session[1],),
             ).fetchall()
             conn.close()
             notes = [dict(row) for row in rows]
+            json_response(self, 200, {"notes": notes})
+            return
+
+        if parsed.path == "/api/blog":
+            conn = get_conn()
+            rows = conn.execute(
+                "SELECT notes.id, notes.title, notes.content_md, notes.updated_at, users.email AS author_email "
+                "FROM notes JOIN users ON users.id = notes.user_id WHERE notes.published = 1 "
+                "ORDER BY notes.updated_at DESC LIMIT 100"
+            ).fetchall()
+            conn.close()
+            notes = [
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "content_md": row["content_md"],
+                    "updated_at": row["updated_at"],
+                    "author_email": row["author_email"],
+                }
+                for row in rows
+            ]
             json_response(self, 200, {"notes": notes})
             return
 
@@ -211,18 +252,20 @@ class AppHandler(BaseHTTPRequestHandler):
             password = data.get("password") or ""
             full_name = data.get("full_name") or ""
             phone = data.get("phone") or ""
+            password_manager_url = clean_url(data.get("password_manager_url"))
             if not email or not password:
                 json_response(self, 400, {"error": "email_and_password_required"})
                 return
             conn = get_conn()
             try:
                 conn.execute(
-                    "INSERT INTO users (email, password_hash, full_name, phone, created_at) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO users (email, password_hash, full_name, phone, password_manager_url, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                     (
                         email,
                         hash_password(password),
                         simple_encrypt(full_name) if full_name else None,
                         simple_encrypt(phone) if phone else None,
+                        simple_encrypt(password_manager_url) if password_manager_url else None,
                         int(time.time()),
                     ),
                 )
@@ -289,14 +332,15 @@ class AppHandler(BaseHTTPRequestHandler):
             data = parse_json(self)
             title = (data.get("title") or "").strip()
             content = data.get("content") or ""
+            published = 1 if data.get("published") else 0
             if not title:
                 json_response(self, 400, {"error": "title_required"})
                 return
             now = int(time.time())
             conn = get_conn()
             conn.execute(
-                "INSERT INTO notes (user_id, title, content_md, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                (session[1], title, content, now, now),
+                "INSERT INTO notes (user_id, title, content_md, published, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (session[1], title, content, published, now, now),
             )
             conn.commit()
             conn.close()
@@ -307,6 +351,30 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def do_PUT(self):  # noqa: N802
         parsed = urlparse(self.path)
+        if parsed.path == "/api/me":
+            session = with_session(self)
+            if not session:
+                json_response(self, 401, {"error": "auth_required"})
+                return
+            data = parse_json(self)
+            full_name = (data.get("full_name") or "").strip()
+            phone = (data.get("phone") or "").strip()
+            password_manager_url = clean_url(data.get("password_manager_url"))
+            conn = get_conn()
+            conn.execute(
+                "UPDATE users SET full_name = ?, phone = ?, password_manager_url = ? WHERE id = ?",
+                (
+                    simple_encrypt(full_name) if full_name else None,
+                    simple_encrypt(phone) if phone else None,
+                    simple_encrypt(password_manager_url) if password_manager_url else None,
+                    session[1],
+                ),
+            )
+            conn.commit()
+            conn.close()
+            json_response(self, 200, {"ok": True})
+            return
+
         if parsed.path.startswith("/api/notes/"):
             session = with_session(self)
             if not session:
@@ -318,20 +386,29 @@ class AppHandler(BaseHTTPRequestHandler):
                 json_response(self, 400, {"error": "invalid_id"})
                 return
             data = parse_json(self)
-            title = (data.get("title") or "").strip()
-            content = data.get("content") or ""
             conn = get_conn()
             row = conn.execute(
-                "SELECT id FROM notes WHERE id = ? AND user_id = ?",
+                "SELECT id, title, content_md, published FROM notes WHERE id = ? AND user_id = ?",
                 (note_id, session[1]),
             ).fetchone()
             if not row:
                 conn.close()
                 json_response(self, 404, {"error": "not_found"})
                 return
+            title = (data.get("title", row["title"]) or "").strip()
+            content = data.get("content")
+            if content is None:
+                content = row["content_md"]
+            published = row["published"]
+            if "published" in data:
+                published = 1 if data.get("published") else 0
+            if not title:
+                conn.close()
+                json_response(self, 400, {"error": "title_required"})
+                return
             conn.execute(
-                "UPDATE notes SET title = ?, content_md = ?, updated_at = ? WHERE id = ?",
-                (title, content, int(time.time()), note_id),
+                "UPDATE notes SET title = ?, content_md = ?, published = ?, updated_at = ? WHERE id = ?",
+                (title, content, published, int(time.time()), note_id),
             )
             conn.commit()
             conn.close()
