@@ -4,7 +4,6 @@ const authPanel = document.getElementById('auth-panel');
 const adminPanel = document.getElementById('admin-panel');
 const authForm = document.getElementById('auth-form');
 const loginBtn = document.getElementById('login-btn');
-const registerBtn = document.getElementById('register-btn');
 const logoutBtn = document.getElementById('logout-btn');
 const statusEl = document.getElementById('status');
 
@@ -19,6 +18,11 @@ const notesList = document.getElementById('notes-list');
 
 const userForm = document.getElementById('user-form');
 const userList = document.getElementById('user-list');
+const userNickname = userForm?.querySelector('input[name="user_nickname"]');
+const userEmail = userForm?.querySelector('input[name="user_email"]');
+const userPassword = userForm?.querySelector('input[name="user_password"]');
+const userPasswordConfirm = userForm?.querySelector('input[name="user_password_confirm"]');
+const userIsAdmin = userForm?.querySelector('input[name="user_is_admin"]');
 
 const currentPathInput = document.getElementById('current-path');
 const refreshFilesBtn = document.getElementById('refresh-files');
@@ -90,7 +94,7 @@ async function loadUsers() {
     data.users.forEach((u) => {
       const pill = document.createElement('div');
       pill.className = 'pill';
-      pill.textContent = `${u.email}${u.is_admin ? ' · admin' : ''}`;
+      pill.textContent = `${u.nickname} (${u.email})${u.is_admin ? ' · admin' : ''}`;
       userList.appendChild(pill);
     });
   } catch (e) {
@@ -222,22 +226,6 @@ authForm.addEventListener('submit', async (e) => {
   }
 });
 
-registerBtn.addEventListener('click', async () => {
-  const formData = new FormData(authForm);
-  const email = formData.get('email');
-  const password = formData.get('password');
-  if (!email || !password) {
-    alert('Укажите почту и пароль');
-    return;
-  }
-  try {
-    await api('/api/register', { method: 'POST', body: JSON.stringify({ email, password }) });
-    setStatus('Первый пользователь создан. Войдите.');
-  } catch (err) {
-    alert('Не удалось создать пользователя (возможно, уже существует).');
-  }
-});
-
 logoutBtn.addEventListener('click', async () => {
   await api('/api/logout', { method: 'POST' });
   state.user = null;
@@ -246,14 +234,23 @@ logoutBtn.addEventListener('click', async () => {
 
 userForm.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const formData = new FormData(userForm);
-  const email = formData.get('user_email');
-  const password = formData.get('user_password');
-  const isAdmin = formData.get('user_is_admin') === 'on';
+  const nickname = userNickname.value.trim();
+  const email = userEmail.value.trim();
+  const password = userPassword.value;
+  const passwordConfirm = userPasswordConfirm.value;
+  const isAdmin = userIsAdmin.checked;
+  if (!nickname || !email || !password) {
+    alert('Заполните ник, email и пароль');
+    return;
+  }
+  if (password !== passwordConfirm) {
+    alert('Пароли не совпадают');
+    return;
+  }
   try {
     await api('/api/admin/users', {
       method: 'POST',
-      body: JSON.stringify({ email, password, is_admin: isAdmin }),
+      body: JSON.stringify({ nickname, email, password, is_admin: isAdmin }),
     });
     userForm.reset();
     await loadUsers();

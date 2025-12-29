@@ -13,6 +13,9 @@ DB_PATH = os.environ.get("DB_PATH", "/data/app.db")
 APP_SECRET = os.environ.get("APP_SECRET", "dev-secret")
 FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "http://localhost:4173")
 FILES_ROOT = os.environ.get("FILES_ROOT", "/data/files")
+DEFAULT_ADMIN_EMAIL = os.environ.get("DEFAULT_ADMIN_EMAIL", "a.moskalev")
+DEFAULT_ADMIN_PASSWORD = os.environ.get("DEFAULT_ADMIN_PASSWORD", "120488")
+ADMIN_SEED_MARKER = os.path.join(os.path.dirname(DB_PATH) or ".", ".admin_seeded")
 
 
 def ensure_column(conn, table: str, column: str, definition: str):
@@ -29,6 +32,7 @@ def ensure_db():
         """
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nickname TEXT,
             email TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             full_name TEXT,
@@ -66,9 +70,33 @@ def ensure_db():
     )
     ensure_column(conn, "users", "password_manager_url", "TEXT")
     ensure_column(conn, "users", "is_admin", "INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "users", "nickname", "TEXT")
     ensure_column(conn, "notes", "published", "INTEGER NOT NULL DEFAULT 0")
+
+    seed_default_admin(conn)
     conn.commit()
     conn.close()
+
+
+def seed_default_admin(conn):
+    if os.path.exists(ADMIN_SEED_MARKER):
+        return
+    conn.execute("DELETE FROM sessions")
+    conn.execute("DELETE FROM notes")
+    conn.execute("DELETE FROM users")
+    conn.execute(
+        "INSERT INTO users (nickname, email, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?, ?)",
+        (
+            "Администратор",
+            DEFAULT_ADMIN_EMAIL.lower(),
+            hash_password(DEFAULT_ADMIN_PASSWORD),
+            1,
+            int(time.time()),
+        ),
+    )
+    conn.commit()
+    with open(ADMIN_SEED_MARKER, "w", encoding="utf-8") as marker:
+        marker.write(str(int(time.time())))
 
 
 def get_conn():
@@ -178,7 +206,7 @@ def with_session(handler: BaseHTTPRequestHandler):
     conn = get_conn()
     now = int(time.time())
     row = conn.execute(
-        "SELECT sessions.token, sessions.user_id, users.email, users.full_name, users.phone, users.password_manager_url, users.is_admin "
+        "SELECT sessions.token, sessions.user_id, users.email, users.nickname, users.full_name, users.phone, users.password_manager_url, users.is_admin "
         "FROM sessions JOIN users ON users.id = sessions.user_id WHERE sessions.token = ? AND sessions.expires_at > ?",
         (token, now),
     ).fetchone()
@@ -187,7 +215,7 @@ def with_session(handler: BaseHTTPRequestHandler):
 
 
 def is_admin(session) -> bool:
-    return bool(session and len(session) > 6 and session[6])
+    return bool(session and len(session) > 7 and session[7])
 
 
 class AppHandler(BaseHTTPRequestHandler):
@@ -215,11 +243,12 @@ class AppHandler(BaseHTTPRequestHandler):
                 json_response(self, 401, {"error": "auth_required"})
                 return
             user = {
+                "nickname": session[3],
                 "email": session[2],
-                "full_name": simple_decrypt(session[3]) if session[3] else None,
-                "phone": simple_decrypt(session[4]) if session[4] else None,
-                "password_manager_url": simple_decrypt(session[5]) if session[5] else None,
-                "is_admin": bool(session[6]),
+                "full_name": simple_decrypt(session[4]) if session[4] else None,
+                "phone": simple_decrypt(session[5]) if session[5] else None,
+                "password_manager_url": simple_decrypt(session[6]) if session[6] else None,
+                "is_admin": bool(session[7]),
             }
             json_response(self, 200, {"user": user})
             return
@@ -252,12 +281,13 @@ class AppHandler(BaseHTTPRequestHandler):
                 return
             conn = get_conn()
             rows = conn.execute(
-                "SELECT id, email, is_admin, created_at FROM users ORDER BY created_at DESC"
+                "SELECT id, nickname, email, is_admin, created_at FROM users ORDER BY created_at DESC"
             ).fetchall()
             conn.close()
             users = [
                 {
                     "id": row["id"],
+                    "nickname": row["nickname"],
                     "email": row["email"],
                     "is_admin": bool(row["is_admin"]),
                     "created_at": row["created_at"],
@@ -323,38 +353,7 @@ class AppHandler(BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802
         parsed = urlparse(self.path)
         if parsed.path == "/api/register":
-            data = parse_json(self)
-            email = (data.get("email") or "").strip().lower()
-            password = data.get("password") or ""
-            full_name = (data.get("full_name") or "").strip()
-            phone = (data.get("phone") or "").strip()
-            password_manager_url = clean_url(data.get("password_manager_url"))
-            if not email or not password:
-                json_response(self, 400, {"error": "email_and_password_required"})
-                return
-            conn = get_conn()
-            total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-            is_admin = 1 if total_users == 0 else 0
-            try:
-                conn.execute(
-                    "INSERT INTO users (email, password_hash, full_name, phone, password_manager_url, is_admin, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        email,
-                        hash_password(password),
-                        simple_encrypt(full_name) if full_name else None,
-                        simple_encrypt(phone) if phone else None,
-                        simple_encrypt(password_manager_url) if password_manager_url else None,
-                        is_admin,
-                        int(time.time()),
-                    ),
-                )
-                conn.commit()
-            except sqlite3.IntegrityError:
-                conn.close()
-                json_response(self, 409, {"error": "email_exists"})
-                return
-            conn.close()
-            json_response(self, 201, {"ok": True})
+            json_response(self, 403, {"error": "registration_disabled"})
             return
 
         if parsed.path == "/api/login":
@@ -412,17 +411,18 @@ class AppHandler(BaseHTTPRequestHandler):
                 json_response(self, 403, {"error": "admin_only"})
                 return
             data = parse_json(self)
+            nickname = (data.get("nickname") or "").strip()
             email = (data.get("email") or "").strip().lower()
             password = data.get("password") or ""
             make_admin = 1 if data.get("is_admin") else 0
-            if not email or not password:
-                json_response(self, 400, {"error": "email_and_password_required"})
+            if not email or not password or not nickname:
+                json_response(self, 400, {"error": "nickname_email_and_password_required"})
                 return
             conn = get_conn()
             try:
                 conn.execute(
-                    "INSERT INTO users (email, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?)",
-                    (email, hash_password(password), make_admin, int(time.time())),
+                    "INSERT INTO users (nickname, email, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (nickname, email, hash_password(password), make_admin, int(time.time())),
                 )
                 conn.commit()
             except sqlite3.IntegrityError:

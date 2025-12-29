@@ -20,12 +20,12 @@
       <section class="panel glass" id="auth-panel">
         <div class="panel-header">
           <h2>Вход</h2>
-          <p class="hint">Минимум отвлечений: только почта и пароль.</p>
+          <p class="hint">Минимум отвлечений: только логин и пароль (по умолчанию a.moskalev / 120488).</p>
         </div>
         <form id="auth-form" class="stack">
           <label class="field">
-            <span>Почта</span>
-            <input type="email" name="email" required />
+            <span>Логин</span>
+            <input type="text" name="email" required />
           </label>
           <label class="field">
             <span>Пароль</span>
@@ -33,7 +33,6 @@
           </label>
           <div class="actions">
             <button type="submit" class="btn primary" id="login-btn">Войти</button>
-            <button type="button" class="btn ghost" id="register-btn">Создать первого пользователя</button>
           </div>
         </form>
       </section>
@@ -50,16 +49,24 @@
           <div class="card action-card">
             <div class="card-header">
               <h3>Пользователи</h3>
-              <p class="mini">Создайте новых пользователей сразу здесь.</p>
+              <p class="mini">Создайте новых пользователей отдельной кнопкой ниже.</p>
             </div>
             <form id="user-form" class="stack">
               <label class="field">
-                <span>Email нового пользователя</span>
+                <span>Ник</span>
+                <input type="text" name="user_nickname" required />
+              </label>
+              <label class="field">
+                <span>Email</span>
                 <input type="email" name="user_email" required />
               </label>
               <label class="field">
                 <span>Пароль</span>
                 <input type="password" name="user_password" required />
+              </label>
+              <label class="field">
+                <span>Повторите пароль</span>
+                <input type="password" name="user_password_confirm" required />
               </label>
               <label class="checkbox">
                 <input type="checkbox" name="user_is_admin" />
