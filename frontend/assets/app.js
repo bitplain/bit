@@ -1,20 +1,20 @@
 const API_BASE = 'http://localhost:8000';
 
 const authPanel = document.getElementById('auth-panel');
-const docsShell = document.getElementById('docs-shell');
+const dashboard = document.getElementById('dashboard');
 const authForm = document.getElementById('auth-form');
 const loginBtn = document.getElementById('login-btn');
 const logoutBtn = document.getElementById('logout-btn');
 const statusEl = document.getElementById('status');
 
-const userCardEmail = document.getElementById('user-email');
-const userCardNick = document.getElementById('user-nick');
-const createNoteBtn = document.getElementById('create-note-btn');
+const userEmailEl = document.getElementById('user-email');
+const userNickEl = document.getElementById('user-nick');
 
-const notesNav = document.getElementById('notes-nav');
-const refreshNotesBtn = document.getElementById('refresh-notes');
-const noteHeading = document.getElementById('note-heading');
-
+// Knowledge base
+const kbList = document.getElementById('kb-list');
+const detailTitle = document.getElementById('detail-title');
+const detailMeta = document.getElementById('detail-meta');
+const detailBody = document.getElementById('detail-body');
 const noteForm = document.getElementById('note-form');
 const noteIdInput = document.getElementById('note-id');
 const noteTitle = document.getElementById('note-title');
@@ -22,29 +22,27 @@ const noteContent = document.getElementById('note-content');
 const notePublish = document.getElementById('note-publish');
 const noteCancel = document.getElementById('note-cancel');
 const previewEl = document.getElementById('preview');
+const refreshNotesBtn = document.getElementById('refresh-notes');
+const newArticleBtn = document.getElementById('new-article-btn');
 
-const userForm = document.getElementById('user-form');
-const userList = document.getElementById('user-list');
-const userNickname = userForm?.querySelector('input[name="user_nickname"]');
-const userEmail = userForm?.querySelector('input[name="user_email"]');
-const userPassword = userForm?.querySelector('input[name="user_password"]');
-const userPasswordConfirm = userForm?.querySelector('input[name="user_password_confirm"]');
-const userIsAdmin = userForm?.querySelector('input[name="user_is_admin"]');
-const toggleUserFormBtn = document.getElementById('toggle-user-form');
-
-const currentPathInput = document.getElementById('current-path');
-const refreshFilesBtn = document.getElementById('refresh-files');
-const fileList = document.getElementById('file-list');
-const folderForm = document.getElementById('folder-form');
-const folderNameInput = document.getElementById('folder-name');
-const uploadForm = document.getElementById('upload-form');
-const fileInput = document.getElementById('file-input');
+// Password manager
+const passwordForm = document.getElementById('password-form');
+const passwordId = document.getElementById('password-id');
+const passwordTitle = document.getElementById('password-title');
+const passwordLogin = document.getElementById('password-login');
+const passwordSecret = document.getElementById('password-secret');
+const passwordUrl = document.getElementById('password-url');
+const passwordNotes = document.getElementById('password-notes');
+const passwordCancel = document.getElementById('password-cancel');
+const passwordList = document.getElementById('password-list');
+const refreshPasswordsBtn = document.getElementById('refresh-passwords');
 
 const state = {
   user: null,
-  editingNoteId: null,
   notes: [],
-  currentPath: '/',
+  selectedNoteId: null,
+  passwords: [],
+  editingPasswordId: null,
 };
 
 function setStatus(text) {
@@ -69,14 +67,14 @@ function formatDate(ts) {
 
 function showDashboard(user) {
   authPanel.hidden = true;
-  docsShell.hidden = false;
+  dashboard.hidden = false;
+  userEmailEl.textContent = user.email;
+  userNickEl.textContent = user.nickname || 'Админ';
   setStatus(`Админ: ${user.email}`);
-  userCardEmail.textContent = user.email;
-  userCardNick.textContent = user.nickname || 'Админ';
 }
 
 function hideDashboard() {
-  docsShell.hidden = true;
+  dashboard.hidden = true;
   authPanel.hidden = false;
   setStatus('Требуется вход');
 }
@@ -91,97 +89,82 @@ async function loadProfile() {
       return;
     }
     showDashboard(data.user);
-    await Promise.all([loadUsers(), loadNotes(), loadFiles(state.currentPath)]);
+    await Promise.all([loadNotes(), loadPasswords()]);
   } catch (e) {
     state.user = null;
     hideDashboard();
   }
 }
 
-async function loadUsers() {
-  try {
-    const data = await api('/api/admin/users');
-    userList.innerHTML = '';
-    data.users.forEach((u) => {
-      const pill = document.createElement('div');
-      pill.className = 'pill';
-      pill.textContent = `${u.nickname} (${u.email})${u.is_admin ? ' · admin' : ''}`;
-      userList.appendChild(pill);
-    });
-  } catch (e) {
-    userList.innerHTML = '<p class="empty">Не удалось загрузить пользователей</p>';
-  }
-}
-
-function renderNotesNav() {
-  notesNav.innerHTML = '';
+function renderNotes() {
+  kbList.innerHTML = '';
   if (!state.notes.length) {
-    notesNav.innerHTML = '<p class="empty">Пока нет инструкций</p>';
+    kbList.innerHTML = '<p class="empty">Пока нет статей</p>';
+    detailTitle.textContent = 'Выберите статью';
+    detailMeta.textContent = '';
+    detailBody.textContent = 'Здесь откроется полная версия записи';
     return;
   }
   state.notes.forEach((note) => {
-    const item = document.createElement('div');
-    item.className = 'nav-item';
-    if (state.editingNoteId === note.id) item.classList.add('active');
-    const title = document.createElement('div');
+    const card = document.createElement('div');
+    card.className = 'kb-card';
+    const title = document.createElement('h4');
     title.textContent = note.title;
-    const meta = document.createElement('div');
+    const meta = document.createElement('p');
     meta.className = 'meta';
     meta.textContent = `${note.published ? 'Опубликовано' : 'Черновик'} · ${formatDate(note.updated_at)}`;
-    const actions = document.createElement('div');
-    actions.className = 'card-actions';
-    const toggleBtn = document.createElement('button');
-    toggleBtn.className = 'btn ghost small';
-    toggleBtn.textContent = note.published ? 'Снять' : 'Опубликовать';
-    toggleBtn.addEventListener('click', async (evt) => {
-      evt.stopPropagation();
-      await api(`/api/notes/${note.id}`, { method: 'PUT', body: JSON.stringify({ published: !note.published }) });
-      await loadNotes();
+    const snippet = document.createElement('p');
+    snippet.className = 'snippet';
+    const content = note.content_md || '';
+    snippet.textContent = content.length > 180 ? `${content.slice(0, 180)}…` : content || '—';
+    card.append(title, meta, snippet);
+    card.addEventListener('click', () => {
+      state.selectedNoteId = note.id;
+      loadNoteIntoForm(note);
+      showNoteDetail(note);
     });
-    const deleteBtn = document.createElement('button');
-    deleteBtn.className = 'btn danger small';
-    deleteBtn.textContent = 'Удалить';
-    deleteBtn.addEventListener('click', async (evt) => {
-      evt.stopPropagation();
-      await api(`/api/notes/${note.id}`, { method: 'DELETE' });
-      await loadNotes();
-    });
-    actions.append(toggleBtn, deleteBtn);
-    item.append(title, meta, actions);
-    item.addEventListener('click', () => loadNoteIntoForm(note));
-    notesNav.appendChild(item);
+    kbList.appendChild(card);
   });
+  const current = state.notes.find((n) => n.id === state.selectedNoteId) || state.notes[0];
+  if (current) {
+    state.selectedNoteId = current.id;
+    showNoteDetail(current);
+  }
+}
+
+function showNoteDetail(note) {
+  detailTitle.textContent = note.title;
+  detailMeta.textContent = `${note.published ? 'Опубликовано' : 'Черновик'} · ${formatDate(note.updated_at)}`;
+  detailBody.textContent = note.content_md || '—';
 }
 
 function loadNoteIntoForm(note) {
-  state.editingNoteId = note.id;
-  noteHeading.textContent = 'Редактирование инструкции';
+  state.selectedNoteId = note.id;
   noteIdInput.value = note.id;
   noteTitle.value = note.title;
   noteContent.value = note.content_md;
   notePublish.checked = !!note.published;
   previewEl.textContent = note.content_md;
-  renderNotesNav();
-  noteTitle.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 async function loadNotes() {
   try {
     const data = await api('/api/notes');
     state.notes = data.notes;
-    renderNotesNav();
+    renderNotes();
   } catch (e) {
-    notesNav.innerHTML = '<p class="empty">Не удалось загрузить инструкции</p>';
+    kbList.innerHTML = '<p class="empty">Не удалось загрузить статьи</p>';
   }
 }
 
 function resetNoteForm() {
-  state.editingNoteId = null;
-  noteHeading.textContent = 'Новая инструкция';
+  state.selectedNoteId = null;
   noteIdInput.value = '';
   noteForm.reset();
   previewEl.textContent = '';
-  renderNotesNav();
+  detailTitle.textContent = 'Новая статья';
+  detailMeta.textContent = '';
+  detailBody.textContent = 'Впишите текст и сохраните, чтобы увидеть полную версию';
 }
 
 noteForm.addEventListener('input', (e) => {
@@ -198,27 +181,23 @@ noteForm.addEventListener('submit', async (e) => {
     published: notePublish.checked,
   };
   try {
-    if (state.editingNoteId) {
-      await api(`/api/notes/${state.editingNoteId}`, { method: 'PUT', body: JSON.stringify(body) });
+    if (state.selectedNoteId) {
+      await api(`/api/notes/${state.selectedNoteId}`, { method: 'PUT', body: JSON.stringify(body) });
     } else {
       await api('/api/notes', { method: 'POST', body: JSON.stringify(body) });
     }
     resetNoteForm();
     await loadNotes();
   } catch (err) {
-    alert('Не удалось сохранить инструкцию');
+    alert('Не удалось сохранить статью');
   }
 });
 
-noteCancel.addEventListener('click', () => {
-  resetNoteForm();
-});
-
-createNoteBtn.addEventListener('click', () => {
+noteCancel.addEventListener('click', () => resetNoteForm());
+newArticleBtn.addEventListener('click', () => {
   resetNoteForm();
   noteTitle.focus();
 });
-
 refreshNotesBtn.addEventListener('click', () => loadNotes());
 
 authForm.addEventListener('submit', async (e) => {
@@ -245,144 +224,117 @@ logoutBtn.addEventListener('click', async () => {
   hideDashboard();
 });
 
-toggleUserFormBtn.addEventListener('click', () => {
-  const isHidden = userForm.hidden;
-  userForm.hidden = !isHidden;
-  toggleUserFormBtn.textContent = isHidden ? 'Скрыть' : 'Создать';
-});
-
-userForm.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const nickname = userNickname.value.trim();
-  const email = userEmail.value.trim();
-  const password = userPassword.value;
-  const passwordConfirm = userPasswordConfirm.value;
-  const isAdmin = userIsAdmin.checked;
-  if (!nickname || !email || !password) {
-    alert('Заполните ник, email и пароль');
+function renderPasswords() {
+  passwordList.innerHTML = '';
+  if (!state.passwords.length) {
+    passwordList.innerHTML = '<p class="empty">Паролей пока нет</p>';
     return;
   }
-  if (password !== passwordConfirm) {
-    alert('Пароли не совпадают');
-    return;
-  }
-  try {
-    await api('/api/admin/users', {
-      method: 'POST',
-      body: JSON.stringify({ nickname, email, password, is_admin: isAdmin }),
+  state.passwords.forEach((item) => {
+    const card = document.createElement('div');
+    card.className = 'note-card';
+    const title = document.createElement('h3');
+    title.textContent = item.title;
+    const meta = document.createElement('p');
+    meta.className = 'meta';
+    meta.textContent = `Обновлено ${formatDate(item.updated_at)}`;
+    const loginLine = document.createElement('p');
+    loginLine.className = 'meta';
+    loginLine.textContent = item.login ? `Логин: ${item.login}` : 'Логин: —';
+    const url = document.createElement('p');
+    url.className = 'meta';
+    url.textContent = item.url ? `Ссылка: ${item.url}` : 'Ссылка: —';
+    const secretRow = document.createElement('div');
+    secretRow.className = 'card-actions';
+    const secretText = document.createElement('span');
+    secretText.textContent = 'Пароль: *****';
+    const revealBtn = document.createElement('button');
+    revealBtn.className = 'btn ghost';
+    revealBtn.textContent = 'Показать';
+    let revealed = false;
+    revealBtn.addEventListener('click', () => {
+      revealed = !revealed;
+      secretText.textContent = revealed ? `Пароль: ${item.password}` : 'Пароль: *****';
+      revealBtn.textContent = revealed ? 'Скрыть' : 'Показать';
     });
-    userForm.reset();
-    await loadUsers();
-  } catch (err) {
-    alert('Не удалось создать пользователя');
-  }
-});
+    secretRow.append(secretText, revealBtn);
 
-function joinPath(base, name) {
-  const cleanedBase = base.endsWith('/') ? base.slice(0, -1) : base;
-  return `${cleanedBase}/${name}`.replace(/\/+/g, '/');
+    const notes = document.createElement('pre');
+    notes.textContent = item.notes || '—';
+
+    const actions = document.createElement('div');
+    actions.className = 'card-actions';
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn secondary';
+    editBtn.textContent = 'Редактировать';
+    editBtn.addEventListener('click', () => loadPasswordIntoForm(item));
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'btn danger';
+    deleteBtn.textContent = 'Удалить';
+    deleteBtn.addEventListener('click', async () => {
+      await api(`/api/passwords/${item.id}`, { method: 'DELETE' });
+      await loadPasswords();
+    });
+    actions.append(editBtn, deleteBtn);
+
+    card.append(title, meta, loginLine, url, secretRow, notes, actions);
+    passwordList.appendChild(card);
+  });
 }
 
-async function loadFiles(path) {
-  state.currentPath = path || '/';
-  currentPathInput.value = state.currentPath;
-  try {
-    const encoded = encodeURIComponent(state.currentPath);
-    const data = await api(`/api/files?path=${encoded}`);
-    fileList.innerHTML = '';
-    const entries = data.entries || [];
-    if (state.currentPath !== '/') {
-      const upRow = document.createElement('div');
-      upRow.className = 'file-row';
-      upRow.innerHTML = '<strong>..</strong><span class="file-meta">Назад</span>';
-      upRow.addEventListener('click', () => {
-        const parts = state.currentPath.split('/').filter(Boolean);
-        parts.pop();
-        const newPath = '/' + parts.join('/');
-        loadFiles(newPath || '/');
-      });
-      fileList.appendChild(upRow);
-    }
-    if (!entries.length) {
-      const empty = document.createElement('p');
-      empty.className = 'empty';
-      empty.textContent = 'Пусто';
-      fileList.appendChild(empty);
-      return;
-    }
-    entries.forEach((entry) => {
-      const row = document.createElement('div');
-      row.className = 'file-row';
-      const title = document.createElement('div');
-      title.innerHTML = `<strong>${entry.name}</strong><div class="file-meta">${entry.is_dir ? 'папка' : 'файл'} · ${entry.size}b</div>`;
-      row.appendChild(title);
-      const actions = document.createElement('div');
-      actions.className = 'card-actions';
-      if (entry.is_dir) {
-        const openBtn = document.createElement('button');
-        openBtn.className = 'btn secondary';
-        openBtn.textContent = 'Открыть';
-        openBtn.addEventListener('click', () => loadFiles(joinPath(state.currentPath, entry.name)));
-        actions.appendChild(openBtn);
-      }
-      const delBtn = document.createElement('button');
-      delBtn.className = 'btn danger';
-      delBtn.textContent = 'Удалить';
-      delBtn.addEventListener('click', async () => {
-        const rel = joinPath(state.currentPath, entry.name);
-        await api(`/api/files?path=${encodeURIComponent(rel)}`, { method: 'DELETE' });
-        await loadFiles(state.currentPath);
-      });
-      actions.appendChild(delBtn);
-      row.appendChild(actions);
-      fileList.appendChild(row);
-    });
-  } catch (err) {
-    fileList.innerHTML = '<p class="empty">Не удалось загрузить файлы</p>';
-  }
+function resetPasswordForm() {
+  state.editingPasswordId = null;
+  passwordId.value = '';
+  passwordForm.reset();
 }
 
-refreshFilesBtn.addEventListener('click', () => loadFiles(currentPathInput.value || '/'));
+function loadPasswordIntoForm(item) {
+  state.editingPasswordId = item.id;
+  passwordId.value = item.id;
+  passwordTitle.value = item.title;
+  passwordLogin.value = item.login || '';
+  passwordSecret.value = item.password || '';
+  passwordUrl.value = item.url || '';
+  passwordNotes.value = item.notes || '';
+}
 
-folderForm.addEventListener('submit', async (e) => {
+passwordForm.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const name = folderNameInput.value.trim();
-  if (!name) return;
-  try {
-    await api('/api/files/folder', {
-      method: 'POST',
-      body: JSON.stringify({ path: state.currentPath, name }),
-    });
-    folderNameInput.value = '';
-    await loadFiles(state.currentPath);
-  } catch (err) {
-    alert('Не удалось создать папку');
-  }
-});
-
-uploadForm.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const file = fileInput.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = async () => {
-    const contentBase64 = reader.result.split(',')[1];
-    try {
-      await api('/api/files/upload', {
-        method: 'POST',
-        body: JSON.stringify({
-          path: state.currentPath,
-          name: file.name,
-          content_base64: contentBase64,
-        }),
-      });
-      fileInput.value = '';
-      await loadFiles(state.currentPath);
-    } catch (err) {
-      alert('Не удалось загрузить файл');
-    }
+  const body = {
+    title: passwordTitle.value,
+    login: passwordLogin.value,
+    password: passwordSecret.value,
+    url: passwordUrl.value,
+    notes: passwordNotes.value,
   };
-  reader.readAsDataURL(file);
+  if (!body.title || !body.password) {
+    alert('Название и пароль обязательны');
+    return;
+  }
+  try {
+    if (state.editingPasswordId) {
+      await api(`/api/passwords/${state.editingPasswordId}`, { method: 'PUT', body: JSON.stringify(body) });
+    } else {
+      await api('/api/passwords', { method: 'POST', body: JSON.stringify(body) });
+    }
+    resetPasswordForm();
+    await loadPasswords();
+  } catch (err) {
+    alert('Не удалось сохранить запись');
+  }
 });
+
+passwordCancel.addEventListener('click', () => resetPasswordForm());
+refreshPasswordsBtn.addEventListener('click', () => loadPasswords());
+
+async function loadPasswords() {
+  try {
+    const data = await api('/api/passwords');
+    state.passwords = data.items;
+    renderPasswords();
+  } catch (e) {
+    passwordList.innerHTML = '<p class="empty">Не удалось загрузить пароли</p>';
+  }
+}
 
 loadProfile();

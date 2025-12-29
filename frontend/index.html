@@ -37,104 +37,107 @@
         </form>
       </section>
 
-      <section id="docs-shell" hidden>
+      <section id="dashboard" hidden>
         <div class="topbar">
           <div class="brand">
             <span class="dot"></span>
             <div>
-              <p class="eyebrow">Документация</p>
-              <h2>Инструкции</h2>
+              <p class="eyebrow">Панель</p>
+              <h2>Главная после входа</h2>
             </div>
           </div>
-          <div class="user-card" id="user-card">
+          <div class="user-card">
             <div>
               <p class="mini" id="user-email">—</p>
               <strong id="user-nick">Админ</strong>
             </div>
             <div class="user-actions">
-              <button class="btn secondary" id="create-note-btn" type="button">Новая инструкция</button>
+              <button class="btn secondary" id="new-article-btn" type="button">Новая статья</button>
               <button class="btn ghost" id="logout-btn" type="button">Выйти</button>
             </div>
           </div>
         </div>
 
-        <div class="doc-layout">
-          <aside class="sidebar" id="sidebar">
-            <div class="sidebar-header">
-              <p class="hint">Инструкции</p>
-              <button class="btn ghost small" id="refresh-notes" type="button">Обновить</button>
+        <div class="card-grid dashboard-grid">
+          <div class="card knowledge-card">
+            <div class="card-header">
+              <div>
+                <h3>База знаний</h3>
+                <p class="mini">Последние статьи фрагментами; клик покажет полную.</p>
+              </div>
+              <div class="actions">
+                <button class="btn ghost small" id="refresh-notes" type="button">Обновить</button>
+              </div>
             </div>
-            <div id="notes-nav" class="nav-list"></div>
-            <div class="sidebar-header">
-              <p class="hint">Пользователи</p>
-              <button class="btn ghost small" id="toggle-user-form" type="button">Создать</button>
-            </div>
-            <form id="user-form" class="stack slim" hidden>
-              <input type="text" name="user_nickname" placeholder="Ник" required />
-              <input type="email" name="user_email" placeholder="Email" required />
-              <input type="password" name="user_password" placeholder="Пароль" required />
-              <input type="password" name="user_password_confirm" placeholder="Повторите пароль" required />
-              <label class="checkbox">
-                <input type="checkbox" name="user_is_admin" />
-                <span>Админ</span>
-              </label>
-              <button type="submit" class="btn secondary">Создать пользователя</button>
-            </form>
-            <div id="user-list" class="pill-list"></div>
-          </aside>
 
-          <main class="content">
-            <div class="panel">
-              <div class="panel-header">
-                <h3 id="note-heading">Новая инструкция</h3>
-                <p class="hint">По аналогии с документацией: слева список, справа форма.</p>
-              </div>
-              <form id="note-form" class="stack">
-                <input type="hidden" name="note_id" id="note-id" />
-                <label class="field">
-                  <span>Заголовок</span>
-                  <input type="text" name="title" id="note-title" required />
-                </label>
-                <label class="field">
-                  <span>Текст в Markdown</span>
-                  <textarea name="content" id="note-content" rows="8" placeholder="# Шаг 1"></textarea>
-                </label>
-                <label class="checkbox">
-                  <input type="checkbox" name="publish" id="note-publish" />
-                  <span>Опубликовать</span>
-                </label>
-                <div class="actions">
-                  <button type="submit" class="btn primary" id="note-save">Сохранить</button>
-                  <button type="button" class="btn ghost" id="note-cancel">Сбросить</button>
-                </div>
-                <div class="preview" id="preview"></div>
-              </form>
-            </div>
-            <div class="panel">
-              <div class="panel-header">
-                <h3>Файловый менеджер</h3>
-                <p class="hint">Доступ внутри каталога (без выхода за корень).</p>
-              </div>
-              <div class="stack">
-                <div class="path-row">
-                  <label class="field">
-                    <span>Текущий путь</span>
-                    <input type="text" id="current-path" value="/" />
-                  </label>
-                  <button class="btn ghost" id="refresh-files" type="button">Обновить</button>
-                </div>
-                <div id="file-list" class="file-list"></div>
-                <form id="folder-form" class="inline-form">
-                  <input type="text" id="folder-name" placeholder="Новая папка" />
-                  <button type="submit" class="btn secondary">Создать папку</button>
-                </form>
-                <form id="upload-form" class="inline-form">
-                  <input type="file" id="file-input" />
-                  <button type="submit" class="btn primary">Загрузить файл</button>
-                </form>
+            <div class="kb-layout">
+              <div id="kb-list" class="kb-list"></div>
+              <div class="kb-detail" id="kb-detail">
+                <h4 id="detail-title">Выберите статью</h4>
+                <p class="meta" id="detail-meta"></p>
+                <pre id="detail-body">Здесь откроется полная версия записи</pre>
               </div>
             </div>
-          </main>
+
+            <form id="note-form" class="stack">
+              <input type="hidden" name="note_id" id="note-id" />
+              <label class="field">
+                <span>Заголовок</span>
+                <input type="text" name="title" id="note-title" required />
+              </label>
+              <label class="field">
+                <span>Текст в Markdown</span>
+                <textarea name="content" id="note-content" rows="8" placeholder="# Шаг 1"></textarea>
+              </label>
+              <label class="checkbox">
+                <input type="checkbox" name="publish" id="note-publish" />
+                <span>Опубликовать</span>
+              </label>
+              <div class="actions">
+                <button type="submit" class="btn primary" id="note-save">Сохранить</button>
+                <button type="button" class="btn ghost" id="note-cancel">Сбросить</button>
+              </div>
+              <div class="preview" id="preview"></div>
+            </form>
+          </div>
+
+          <div class="card password-card">
+            <div class="card-header">
+              <div>
+                <h3>Менеджер паролей</h3>
+                <p class="mini">Хранение записей с шифрованием на сервере.</p>
+              </div>
+              <button class="btn ghost small" id="refresh-passwords" type="button">Обновить</button>
+            </div>
+            <form id="password-form" class="stack">
+              <input type="hidden" id="password-id" />
+              <label class="field">
+                <span>Название / сайт</span>
+                <input type="text" id="password-title" required />
+              </label>
+              <label class="field">
+                <span>Логин</span>
+                <input type="text" id="password-login" />
+              </label>
+              <label class="field">
+                <span>Пароль</span>
+                <input type="password" id="password-secret" required />
+              </label>
+              <label class="field">
+                <span>Ссылка</span>
+                <input type="url" id="password-url" placeholder="https://..." />
+              </label>
+              <label class="field">
+                <span>Заметки</span>
+                <textarea id="password-notes" rows="3"></textarea>
+              </label>
+              <div class="actions">
+                <button type="submit" class="btn primary" id="password-save">Сохранить</button>
+                <button type="button" class="btn ghost" id="password-cancel">Сбросить</button>
+              </div>
+            </form>
+            <div id="password-list" class="notes compact"></div>
+          </div>
         </div>
       </section>
     </div>

@@ -68,10 +68,27 @@ def ensure_db():
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS password_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            login_enc TEXT,
+            password_enc TEXT,
+            url_enc TEXT,
+            notes_enc TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+        """
+    )
     ensure_column(conn, "users", "password_manager_url", "TEXT")
     ensure_column(conn, "users", "is_admin", "INTEGER NOT NULL DEFAULT 0")
     ensure_column(conn, "users", "nickname", "TEXT")
     ensure_column(conn, "notes", "published", "INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "password_items", "url_enc", "TEXT")
 
     seed_default_admin(conn)
     conn.commit()
@@ -83,6 +100,7 @@ def seed_default_admin(conn):
         return
     conn.execute("DELETE FROM sessions")
     conn.execute("DELETE FROM notes")
+    conn.execute("DELETE FROM password_items")
     conn.execute("DELETE FROM users")
     conn.execute(
         "INSERT INTO users (nickname, email, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -269,6 +287,62 @@ class AppHandler(BaseHTTPRequestHandler):
             conn.close()
             notes = [dict(row) for row in rows]
             json_response(self, 200, {"notes": notes})
+            return
+
+        if parsed.path.startswith("/api/notes/"):
+            session = with_session(self)
+            if not session:
+                json_response(self, 401, {"error": "auth_required"})
+                return
+            if not is_admin(session):
+                json_response(self, 403, {"error": "admin_only"})
+                return
+            try:
+                note_id = int(parsed.path.split("/")[-1])
+            except ValueError:
+                json_response(self, 400, {"error": "invalid_id"})
+                return
+            conn = get_conn()
+            row = conn.execute(
+                "SELECT id, title, content_md, published, created_at, updated_at FROM notes WHERE id = ? AND user_id = ?",
+                (note_id, session[1]),
+            ).fetchone()
+            conn.close()
+            if not row:
+                json_response(self, 404, {"error": "not_found"})
+                return
+            json_response(self, 200, {"note": dict(row)})
+            return
+
+        if parsed.path == "/api/passwords":
+            session = with_session(self)
+            if not session:
+                json_response(self, 401, {"error": "auth_required"})
+                return
+            if not is_admin(session):
+                json_response(self, 403, {"error": "admin_only"})
+                return
+            conn = get_conn()
+            rows = conn.execute(
+                "SELECT id, title, login_enc, password_enc, url_enc, notes_enc, created_at, updated_at FROM password_items WHERE user_id = ? ORDER BY updated_at DESC",
+                (session[1],),
+            ).fetchall()
+            conn.close()
+            items = []
+            for row in rows:
+                items.append(
+                    {
+                        "id": row["id"],
+                        "title": row["title"],
+                        "login": simple_decrypt(row["login_enc"]) if row["login_enc"] else "",
+                        "password": simple_decrypt(row["password_enc"]) if row["password_enc"] else "",
+                        "url": simple_decrypt(row["url_enc"]) if row["url_enc"] else "",
+                        "notes": simple_decrypt(row["notes_enc"]) if row["notes_enc"] else "",
+                        "created_at": row["created_at"],
+                        "updated_at": row["updated_at"],
+                    }
+                )
+            json_response(self, 200, {"items": items})
             return
 
         if parsed.path == "/api/admin/users":
@@ -515,6 +589,43 @@ class AppHandler(BaseHTTPRequestHandler):
             json_response(self, 201, {"ok": True})
             return
 
+        if parsed.path == "/api/passwords":
+            session = with_session(self)
+            if not session:
+                json_response(self, 401, {"error": "auth_required"})
+                return
+            if not is_admin(session):
+                json_response(self, 403, {"error": "admin_only"})
+                return
+            data = parse_json(self)
+            title = (data.get("title") or "").strip()
+            login_val = (data.get("login") or "").strip()
+            password_val = data.get("password") or ""
+            url_val = clean_url(data.get("url"))
+            notes_val = data.get("notes") or ""
+            if not title or not password_val:
+                json_response(self, 400, {"error": "title_and_password_required"})
+                return
+            now = int(time.time())
+            conn = get_conn()
+            conn.execute(
+                "INSERT INTO password_items (user_id, title, login_enc, password_enc, url_enc, notes_enc, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    session[1],
+                    title,
+                    simple_encrypt(login_val) if login_val else None,
+                    simple_encrypt(password_val),
+                    simple_encrypt(url_val) if url_val else None,
+                    simple_encrypt(notes_val) if notes_val else None,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+            conn.close()
+            json_response(self, 201, {"ok": True})
+            return
+
         json_response(self, 404, {"error": "not_found"})
 
     def do_PUT(self):  # noqa: N802
@@ -585,6 +696,51 @@ class AppHandler(BaseHTTPRequestHandler):
             conn.close()
             json_response(self, 200, {"ok": True})
             return
+
+        if parsed.path.startswith("/api/passwords/"):
+            session = with_session(self)
+            if not session:
+                json_response(self, 401, {"error": "auth_required"})
+                return
+            if not is_admin(session):
+                json_response(self, 403, {"error": "admin_only"})
+                return
+            try:
+                item_id = int(parsed.path.split("/")[-1])
+            except ValueError:
+                json_response(self, 400, {"error": "invalid_id"})
+                return
+            data = parse_json(self)
+            conn = get_conn()
+            row = conn.execute(
+                "SELECT id, title, login_enc, password_enc, url_enc, notes_enc FROM password_items WHERE id = ? AND user_id = ?",
+                (item_id, session[1]),
+            ).fetchone()
+            if not row:
+                conn.close()
+                json_response(self, 404, {"error": "not_found"})
+                return
+            title = (data.get("title") or row["title"]).strip()
+            login_val = data.get("login")
+            password_val = data.get("password")
+            url_val = data.get("url")
+            notes_val = data.get("notes")
+            conn.execute(
+                "UPDATE password_items SET title = ?, login_enc = ?, password_enc = ?, url_enc = ?, notes_enc = ?, updated_at = ? WHERE id = ?",
+                (
+                    title,
+                    simple_encrypt(login_val) if login_val is not None else row["login_enc"],
+                    simple_encrypt(password_val) if password_val is not None else row["password_enc"],
+                    simple_encrypt(clean_url(url_val)) if url_val is not None else row["url_enc"],
+                    simple_encrypt(notes_val) if notes_val is not None else row["notes_enc"],
+                    int(time.time()),
+                    item_id,
+                ),
+            )
+            conn.commit()
+            conn.close()
+            json_response(self, 200, {"ok": True})
+            return
         json_response(self, 404, {"error": "not_found"})
 
     def do_DELETE(self):  # noqa: N802
@@ -606,6 +762,28 @@ class AppHandler(BaseHTTPRequestHandler):
             conn.execute(
                 "DELETE FROM notes WHERE id = ? AND user_id = ?",
                 (note_id, session[1]),
+            )
+            conn.commit()
+            conn.close()
+            json_response(self, 200, {"ok": True})
+            return
+        if parsed.path.startswith("/api/passwords/"):
+            session = with_session(self)
+            if not session:
+                json_response(self, 401, {"error": "auth_required"})
+                return
+            if not is_admin(session):
+                json_response(self, 403, {"error": "admin_only"})
+                return
+            try:
+                item_id = int(parsed.path.split("/")[-1])
+            except ValueError:
+                json_response(self, 400, {"error": "invalid_id"})
+                return
+            conn = get_conn()
+            conn.execute(
+                "DELETE FROM password_items WHERE id = ? AND user_id = ?",
+                (item_id, session[1]),
             )
             conn.commit()
             conn.close()
